@@ -92,6 +92,18 @@ class Importer {
         );
       }
 
+      // An archive with only updates/DLC and no base ROM must not create a
+      // new folder on its own (would spawn an orphan "empty game").
+      final hasBase = romEntries.any(
+          (f) => ZipClassifier.classifyPath(f.name) == RomEntryKind.base);
+      if (!hasBase && !Directory(gameFolder).existsSync()) {
+        return _err(
+          gameFolder,
+          'This archive contains only updates/DLC, but no base game is in '
+          'the library. Import the base game first.',
+        );
+      }
+
       Directory(gameFolder).createSync(recursive: true);
       final updateDir = p.join(gameFolder, 'update');
       final dlcDir = p.join(gameFolder, 'dlc');
@@ -133,10 +145,25 @@ class Importer {
   /// Moves an already-extracted ROM file into the organized library layout.
   /// The file is classified (base/update/dlc) and placed in the game folder
   /// (or its update/ dlc/ subfolder), keeping its original filename.
+  ///
+  /// An update or DLC file requires an existing base-game folder — it is NOT
+  /// allowed to create a new folder on its own, otherwise every update import
+  /// spawns an orphan folder with no base ROM (which then shows up as an
+  /// "empty game" in the library).
   Future<ImportResult> importFile(String filePath, String gameTitle) async {
+    final kind = ZipClassifier.classifyPath(p.basename(filePath));
     final gameFolder = _resolveGameFolder(gameTitle);
+
+    // Update/DLC without an existing base-game folder -> refuse, don't create.
+    if (kind != RomEntryKind.base && !Directory(gameFolder).existsSync()) {
+      return _err(
+        gameFolder,
+        'No base game found for this ${kind == RomEntryKind.update ? 'update' : 'DLC'}. '
+        'Import the base game first, or rename it to match an existing game.',
+      );
+    }
+
     try {
-      final kind = ZipClassifier.classifyPath(p.basename(filePath));
       final destDir = switch (kind) {
         RomEntryKind.update => p.join(gameFolder, 'update'),
         RomEntryKind.dlc => p.join(gameFolder, 'dlc'),

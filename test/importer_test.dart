@@ -165,8 +165,13 @@ void main() {
     });
 
     test('importFile routes an update file into the update/ subfolder', () async {
+      // Base game must exist first (an update can't create its own folder).
+      final base = '${tmp.path}/Game.nsp';
+      File(base).writeAsBytesSync([1, 2, 3]);
+      await Importer(root).importFile(base, 'My Game');
+
       final romPath = '${tmp.path}/Game.Update.v1.6.0.nsp';
-      File(romPath).writeAsBytesSync([1, 2, 3]);
+      File(romPath).writeAsBytesSync([4, 5, 6]);
       final result = await Importer(root).importFile(romPath, 'My Game');
       expect(result.error, isNull);
       expect(result.updateFiles, 1);
@@ -174,6 +179,20 @@ void main() {
         File('$root/My Game/update/Game.Update.v1.6.0.nsp').existsSync(),
         isTrue,
       );
+    });
+
+    test('importing an update without a base game refuses (no orphan folder)',
+        () async {
+      // No base game exists in the library.
+      final upd = '${tmp.path}/Game.Update.v1.6.0.nsp';
+      File(upd).writeAsBytesSync([1, 2, 3]);
+
+      final result = await Importer(root).importFile(upd, 'My Game');
+
+      expect(result.error, isNotNull);
+      expect(result.error, contains('base game'));
+      // No folder should have been created.
+      expect(Directory('$root/My Game').existsSync(), isFalse);
     });
 
     test('import merges into an existing game folder (case-insensitive)', () async {
