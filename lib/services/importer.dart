@@ -25,9 +25,11 @@ class ImportResult {
 }
 
 /// Archive formats we can decode (via the `archive` package).
-/// NOTE: 7z is NOT supported — the `archive` package has no 7z decoder.
+/// NOTE: 7z is NOT decodable in-app — the `archive` package has no 7z
+/// decoder. `.7z` is still listed so the app can SEE those files and guide
+/// the user to extract them with Android's built-in extractor.
 const Set<String> kArchiveExtensions = {
-  '.zip', '.tar', '.gz', '.tgz', '.bz2', '.tbz2', '.xz', '.txz',
+  '.zip', '.tar', '.gz', '.tgz', '.bz2', '.tbz2', '.xz', '.txz', '.7z',
 };
 
 /// Extracts a game archive into the organized library layout:

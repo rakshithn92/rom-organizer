@@ -96,7 +96,13 @@ class _ImportScreenState extends State<ImportScreen> {
     final importer = Importer(_libraryRoot);
     var imported = 0, skipped = 0;
     for (final path in files) {
-      final isArchive = kArchiveExtensions.contains(p.extension(path).toLowerCase());
+      final ext = p.extension(path).toLowerCase();
+      // 7z can't be decoded in-app — skip it (user extracts via built-in).
+      if (ext == '.7z') {
+        skipped++;
+        continue;
+      }
+      final isArchive = kArchiveExtensions.contains(ext);
       final candidate = TitleParser.clean(p.basename(path));
 
       // Resolve the real title from TheGamesDB (if a key is set).
@@ -140,6 +146,31 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   Future<void> _import(File file, {required bool isArchive}) async {
+    // 7z can't be decoded in-app (no 7z decoder). Guide the user to extract
+    // it with Android's built-in extractor, then import the extracted ROM.
+    if (isArchive && p.extension(file.path).toLowerCase() == '.7z') {
+      if (mounted) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Extract the 7z first'),
+            content: const Text(
+              '7z files can\'t be opened in-app. Use your device\'s built-in '
+              'file manager to extract this archive, then import the extracted '
+              '.nsp/.xci file from the folder it lands in.',
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() => _busy = true);
 
     // 1. Candidate title from the filename.
