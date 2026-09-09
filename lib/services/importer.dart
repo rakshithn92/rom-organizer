@@ -3,15 +3,16 @@ import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:path/path.dart' as p;
 
+import 'rom_scanner.dart';
 import 'zip_classifier.dart';
 
-/// Result of importing one zip.
+/// Result of importing one archive.
 class ImportResult {
   final String gameFolder; // absolute path of the created game folder
   final int baseFiles;
   final int updateFiles;
   final int dlcFiles;
-  final bool fullyExtracted; // every zip entry now exists on disk
+  final bool fullyExtracted; // every archive entry now exists on disk
   final String? error;
   const ImportResult({
     required this.gameFolder,
@@ -23,7 +24,13 @@ class ImportResult {
   });
 }
 
-/// Extracts a game zip into the organized library layout:
+/// Archive formats we can decode (via the `archive` package).
+/// NOTE: 7z is NOT supported — the `archive` package has no 7z decoder.
+const Set<String> kArchiveExtensions = {
+  '.zip', '.tar', '.gz', '.tgz', '.bz2', '.tbz2', '.xz', '.txz',
+};
+
+/// Extracts a game archive into the organized library layout:
 ///
 ///   root/Game Title/
 ///     base files
@@ -31,39 +38,37 @@ class ImportResult {
 ///       update files
 ///
 /// DLC files (if any) go into a `dlc/` subfolder. After extraction it verifies
-/// every zip entry exists on disk so the caller can safely delete the zip.
+/// every archive entry exists on disk so the caller can safely delete the
+/// archive. Only Switch ROM entries (.nsp/.xci/.nsz/.xcz/.nca) are extracted —
+/// anything else in the archive is ignored.
 class Importer {
   final String libraryRoot;
 
   Importer(this.libraryRoot);
 
-  /// Imports [zipPath] into a new folder named [gameTitle] under [libraryRoot].
-  /// Returns the result; on failure, [ImportResult.error] is set.
-  Future<ImportResult> importZip(String zipPath, String gameTitle) async {
+  /// Imports [archivePath] into a new folder named [gameTitle] under
+  /// [libraryRoot]. Returns the result; on failure, [ImportResult.error] is
+  /// set. If the archive contains no Switch ROM files, [error] explains that.
+  Future<ImportResult> importArchive(String archivePath, String gameTitle) async {
     final gameFolder = p.join(libraryRoot, gameTitle);
     try {
-      final bytes = await File(zipPath).readAsBytes();
-      final Archive archive;
-      try {
-        archive = ZipDecoder().decodeBytes(bytes, verify: false);
-      } catch (_) {
-        return ImportResult(
-          gameFolder: gameFolder,
-          baseFiles: 0,
-          updateFiles: 0,
-          dlcFiles: 0,
-          fullyExtracted: false,
-          error: 'Not a valid zip archive.',
-        );
+      final bytes = await File(archivePath).readAsBytes();
+      final archive = _decode(archivePath, bytes);
+      if (archive == null) {
+        return _err(gameFolder, 'Not a valid archive (unsupported or corrupt).');
       }
       if (archive.isEmpty) {
-        return ImportResult(
-          gameFolder: gameFolder,
-          baseFiles: 0,
-          updateFiles: 0,
-          dlcFiles: 0,
-          fullyExtracted: false,
-          error: 'Not a valid zip archive.',
+        return _err(gameFolder, 'Archive is empty.');
+      }
+
+      // Validate: does the archive actually contain Switch ROM files?
+      final romEntries = archive.files.where((f) =>
+          f.isFile && kSwitchRomExtensions.contains(_ext(f.name))).toList();
+      if (romEntries.isEmpty) {
+        return _err(
+          gameFolder,
+          'No Switch ROM files (.nsp/.xci/.nsz/.xcz/.nca) found in this '
+          'archive. Please provide a Switch ROM archive only.',
         );
       }
 
@@ -72,8 +77,7 @@ class Importer {
       final dlcDir = p.join(gameFolder, 'dlc');
 
       var base = 0, upd = 0, dlc = 0;
-      for (final f in archive.files) {
-        if (!f.isFile) continue;
+      for (final f in romEntries) {
         final kind = ZipClassifier.classifyPath(f.name);
         final destDir = switch (kind) {
           RomEntryKind.update => updateDir,
@@ -93,7 +97,7 @@ class Importer {
         }
       }
 
-      final fully = _verify(archive, gameFolder);
+      final fully = _verify(romEntries, gameFolder);
       return ImportResult(
         gameFolder: gameFolder,
         baseFiles: base,
@@ -102,14 +106,7 @@ class Importer {
         fullyExtracted: fully,
       );
     } catch (e) {
-      return ImportResult(
-        gameFolder: gameFolder,
-        baseFiles: 0,
-        updateFiles: 0,
-        dlcFiles: 0,
-        fullyExtracted: false,
-        error: e.toString(),
-      );
+      return _err(gameFolder, e.toString());
     }
   }
 
@@ -136,22 +133,38 @@ class Importer {
         fullyExtracted: true,
       );
     } catch (e) {
-      return ImportResult(
-        gameFolder: gameFolder,
-        baseFiles: 0,
-        updateFiles: 0,
-        dlcFiles: 0,
-        fullyExtracted: false,
-        error: e.toString(),
-      );
+      return _err(gameFolder, e.toString());
     }
   }
 
-  /// True if every file entry in [archive] now exists on disk under [root]
+  /// Decodes [bytes] as an archive based on [path]'s extension. Returns null
+  /// if the format is unsupported or the bytes are corrupt.
+  Archive? _decode(String path, List<int> bytes) {
+    final ext = _ext(path);
+    try {
+      switch (ext) {
+        case '.zip':
+          return ZipDecoder().decodeBytes(bytes, verify: false);
+        case '.tar':
+          return TarDecoder().decodeBytes(bytes);
+        case '.gz' || '.tgz':
+          return TarDecoder().decodeBytes(GZipDecoder().decodeBytes(bytes));
+        case '.bz2' || '.tbz2':
+          return TarDecoder().decodeBytes(BZip2Decoder().decodeBytes(bytes));
+        case '.xz' || '.txz':
+          return TarDecoder().decodeBytes(XZDecoder().decodeBytes(bytes));
+        default:
+          return null; // unsupported format (e.g. .7z)
+      }
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// True if every ROM entry in [entries] now exists on disk under [root]
   /// (base files at root, update/dlc in their subfolders).
-  bool _verify(Archive archive, String root) {
-    for (final f in archive.files) {
-      if (!f.isFile) continue;
+  bool _verify(List<ArchiveFile> entries, String root) {
+    for (final f in entries) {
       final kind = ZipClassifier.classifyPath(f.name);
       final dir = switch (kind) {
         RomEntryKind.update => p.join(root, 'update'),
@@ -165,17 +178,33 @@ class Importer {
     return true;
   }
 
-  /// Re-checks whether every entry of the zip at [zipPath] is present under
-  /// [gameFolder] (without re-extracting). Used to decide if the zip can be
-  /// deleted after a partial extraction.
-  Future<bool> verifyExtracted(String zipPath, String gameFolder) async {
+  /// Re-checks whether every ROM entry of the archive at [archivePath] is
+  /// present under [gameFolder] (without re-extracting). Used to decide if the
+  /// archive can be deleted after a partial extraction.
+  Future<bool> verifyExtracted(String archivePath, String gameFolder) async {
     try {
-      final bytes = await File(zipPath).readAsBytes();
-      final archive = ZipDecoder().decodeBytes(bytes, verify: false);
-      if (archive.isEmpty) return false;
-      return _verify(archive, gameFolder);
+      final bytes = await File(archivePath).readAsBytes();
+      final archive = _decode(archivePath, bytes);
+      if (archive == null || archive.isEmpty) return false;
+      final romEntries = archive.files.where((f) =>
+          f.isFile && kSwitchRomExtensions.contains(_ext(f.name))).toList();
+      return _verify(romEntries, gameFolder);
     } catch (_) {
       return false;
     }
+  }
+
+  ImportResult _err(String gameFolder, String message) => ImportResult(
+        gameFolder: gameFolder,
+        baseFiles: 0,
+        updateFiles: 0,
+        dlcFiles: 0,
+        fullyExtracted: false,
+        error: message,
+      );
+
+  static String _ext(String path) {
+    final i = path.lastIndexOf('.');
+    return i < 0 ? '' : path.substring(i).toLowerCase();
   }
 }

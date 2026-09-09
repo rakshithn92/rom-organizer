@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/tag_db.dart';
 
@@ -53,8 +54,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 8),
                 const Text(
                   'Used to look up real game titles and cover art. Get a free '
-                  'key at thegamesdb.net (create an account, then visit '
-                  'api.thegamesdb.net/key.php). Stored only on this device.',
+                  'key from TheGamesDB, then paste it below. Stored only on '
+                  'this device.',
+                ),
+                const SizedBox(height: 8),
+                // Clickable links to the site + key page.
+                LinkButton(
+                  icon: Icons.language,
+                  label: 'Open thegamesdb.net',
+                  url: 'https://thegamesdb.net',
+                ),
+                LinkButton(
+                  icon: Icons.key,
+                  label: 'Get your API key',
+                  url: 'https://api.thegamesdb.net/key.php',
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -73,6 +86,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             )
           : const Center(child: CircularProgressIndicator()),
+    );
+  }
+}
+
+/// A tappable row that opens [url] in the browser.
+class LinkButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String url;
+  const LinkButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.url,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(icon),
+      title: Text(label, style: const TextStyle(color: Colors.blue)),
+      trailing: const Icon(Icons.open_in_new, size: 18),
+      onTap: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
     );
   }
 }

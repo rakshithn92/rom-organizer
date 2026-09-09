@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'importer.dart';
+
 /// Recognized Nintendo Switch ROM container extensions.
 const Set<String> kSwitchRomExtensions = {
   '.nsp', '.xci', '.nsz', '.xcz', '.nca',
@@ -57,6 +59,25 @@ class RomScanner {
         }
       } else if (e is Directory && recursive) {
         out.addAll(scan(e, recursive: true));
+      }
+    }
+    return out;
+  }
+
+  /// Recursively finds every importable file under [dir]: loose Switch ROMs
+  /// AND archives (zip/tar/gz/bz2/xz). Returns absolute paths.
+  List<String> findImportables(Directory dir) {
+    final out = <String>[];
+    if (!dir.existsSync()) return out;
+    for (final e in dir.listSync(followLinks: false)) {
+      if (e is File) {
+        final ext = _ext(e.path);
+        if (kSwitchRomExtensions.contains(ext) ||
+            kArchiveExtensions.contains(ext)) {
+          out.add(e.path);
+        }
+      } else if (e is Directory) {
+        out.addAll(findImportables(e));
       }
     }
     return out;

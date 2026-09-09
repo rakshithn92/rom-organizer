@@ -89,7 +89,7 @@ void main() {
       }));
 
       final importer = Importer(root);
-      final result = await importer.importZip(zipPath, 'My Game');
+      final result = await importer.importArchive(zipPath, 'My Game');
 
       expect(result.error, isNull);
       expect(result.baseFiles, 1);
@@ -103,6 +103,32 @@ void main() {
       );
     });
 
+    test('rejects an archive with no Switch ROM files', () async {
+      final zipPath = '${tmp.path}/notarom.zip';
+      File(zipPath).writeAsBytesSync(makeZip({
+        'readme.txt': 'hello',
+        'photo.jpg': 'x',
+      }));
+
+      final result = await Importer(root).importArchive(zipPath, 'My Game');
+      expect(result.error, isNotNull);
+      expect(result.error, contains('Switch ROM'));
+      // Nothing should have been extracted.
+      expect(Directory('$root/My Game').existsSync(), isFalse);
+    });
+
+    test('extracts a tar archive', () async {
+      final tarPath = '${tmp.path}/game.tar';
+      final archive = Archive();
+      archive.addFile(ArchiveFile('Game.nsp', 4, 'base'.codeUnits));
+      File(tarPath).writeAsBytesSync(TarEncoder().encode(archive));
+
+      final result = await Importer(root).importArchive(tarPath, 'My Game');
+      expect(result.error, isNull);
+      expect(result.baseFiles, 1);
+      expect(File('$root/My Game/Game.nsp').existsSync(), isTrue);
+    });
+
     test('fullyExtracted is false when a zip entry is missing on disk', () async {
       final zipPath = '${tmp.path}/game.zip';
       File(zipPath).writeAsBytesSync(makeZip({
@@ -111,7 +137,7 @@ void main() {
       }));
 
       final importer = Importer(root);
-      final result = await importer.importZip(zipPath, 'My Game');
+      final result = await importer.importArchive(zipPath, 'My Game');
       expect(result.fullyExtracted, isTrue);
 
       // Remove the update file -> verification should now fail.
@@ -120,10 +146,10 @@ void main() {
       expect(recheck, isFalse);
     });
 
-    test('returns an error for a non-zip file', () async {
+    test('returns an error for a non-archive file', () async {
       final zipPath = '${tmp.path}/notazip.zip';
       File(zipPath).writeAsBytesSync([1, 2, 3, 4]);
-      final result = await Importer(root).importZip(zipPath, 'Bad');
+      final result = await Importer(root).importArchive(zipPath, 'Bad');
       expect(result.error, isNotNull);
     });
 

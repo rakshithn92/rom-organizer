@@ -65,4 +65,18 @@ void main() {
   test('scan of a missing directory returns empty', () {
     expect(RomScanner().scan(Directory('${tmp.path}/nope')), isEmpty);
   });
+
+  test('findImportables finds loose ROMs and archives recursively', () {
+    write('top.nsp');
+    write('game.zip');
+    Directory('${tmp.path}/sub').createSync();
+    write('sub/nested.xci');
+    write('sub/notes.txt'); // not importable
+
+    final found = RomScanner().findImportables(tmp);
+    expect(found.length, 3);
+    expect(found.any((f) => f.endsWith('top.nsp')), isTrue);
+    expect(found.any((f) => f.endsWith('game.zip')), isTrue);
+    expect(found.any((f) => f.endsWith('nested.xci')), isTrue);
+  });
 }

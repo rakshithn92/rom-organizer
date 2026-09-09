@@ -6,10 +6,16 @@ separated, and reclaim space by deleting fully-extracted zips.
 
 ## Features
 
-- **Import pipeline** — browse to a `.zip` **or an already-extracted `.nsp` /
-  `.xci` ROM**, auto-resolve the real game title from TheGamesDB (editable),
-  and organize it into a per-game folder. The import view starts in
-  `Download/` by default.
+- **Import pipeline** — browse to a `.zip`, `.tar`, `.gz`, `.bz2`, `.xz` archive
+  **or an already-extracted `.nsp` / `.xci` ROM**, auto-resolve the real game
+  title from TheGamesDB (editable), and organize it into a per-game folder.
+  The import view starts in `Download/` by default.
+- **Auto-import** — tap the ✨ button to recursively scan the current folder
+  and import every Switch ROM and archive it finds, auto-titling each one.
+- **Switch-ROM validation** — before extracting an archive, the app checks its
+  contents actually contain Switch ROM files (`.nsp`/`.xci`/`.nsz`/`.xcz`/
+  `.nca`). If not, it tells you to provide a Switch ROM archive only — nothing
+  is extracted.
 - **Clean layout** — each game gets its own folder, with update files in an
   `update/` subfolder:
   ```
@@ -19,14 +25,19 @@ separated, and reclaim space by deleting fully-extracted zips.
       update/
         ...Update.v1.6.0.nsp
   ```
-- **Zips are extracted; loose ROMs are moved.** A zip is extracted and, once
-  verified fully extracted, you're offered to delete it to reclaim space. An
-  already-extracted `.nsp`/`.xci` is moved into the library (no copy, no
-  leftover).
+- **Archives are extracted; loose ROMs are moved.** An archive is extracted
+  and, once verified fully extracted, you're offered to delete it to reclaim
+  space. An already-extracted `.nsp`/`.xci` is moved into the library (no copy,
+  no leftover).
 - **Library view** — grid of your games with cover art (fetched from
   TheGamesDB and cached locally), an "has update" badge, and a detail view
   listing base + update files.
 - **Recognized formats** — `.nsp`, `.xci`, `.nsz`, `.xcz`, `.nca`.
+
+> **Note on archives:** supported archive formats are `.zip`, `.tar`, `.gz`,
+> `.tgz`, `.bz2`, `.tbz2`, `.xz`, `.txz`. **7z is not supported** — the
+> underlying `archive` library has no 7z decoder. If you have `.7z` files,
+> extract them first (or re-zip as `.zip`).
 
 ## Requirements
 
