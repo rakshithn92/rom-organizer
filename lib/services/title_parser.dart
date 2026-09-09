@@ -40,4 +40,12 @@ class TitleParser {
     s = s.replaceAll(RegExp(r'\s+'), ' ').trim();
     return s;
   }
+
+  /// Extracts the Switch title ID (e.g. `0100C1B00A3A8000`) from [fileName],
+  /// or null if none is present. The base game and its updates share the same
+  /// title ID, so it's the ground truth for matching an update to its base.
+  static String? titleId(String fileName) {
+    final m = _titleId.firstMatch(fileName);
+    return m?.group(0);
+  }
 }

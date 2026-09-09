@@ -265,6 +265,26 @@ void main() {
       expect(folders, 1);
     });
 
+    test('importFile honors an explicit targetFolder (title-ID match)', () async {
+      // Base folder exists.
+      final base = '${tmp.path}/Game.nsp';
+      File(base).writeAsBytesSync([1, 2, 3]);
+      await Importer(root).importFile(base, 'My Game');
+
+      // Update with a title ID, explicitly routed to the base folder.
+      final upd = '${tmp.path}/[0100C1B00A3A8000] Game Update v1.6.0.nsp';
+      File(upd).writeAsBytesSync([4, 5, 6]);
+      final result = await Importer(root).importFile(
+          upd, 'Some Other Title', targetFolder: '$root/My Game');
+
+      expect(result.error, isNull);
+      expect(
+        File('$root/My Game/update/[0100C1B00A3A8000] Game Update v1.6.0.nsp')
+            .existsSync(),
+        isTrue,
+      );
+    });
+
     test('mergeGames combines duplicate folders into the target', () async {
       // Two duplicate folders: an English and a Japanese copy of the same game.
       Directory('$root/My Game EN').createSync(recursive: true);

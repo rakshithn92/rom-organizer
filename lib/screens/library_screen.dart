@@ -109,10 +109,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (confirm != true || !mounted) return;
 
     final moved = Importer(_libraryRoot).mergeGames(target.path, sources);
-    // Remove the cover cache keys for the merged-away source folders.
+    // Remove the cover + title-ID cache keys for the merged-away source folders.
     final db = TagDb();
     for (final s in sources) {
       await db.deleteSetting('cover:$s');
+      await db.deleteTitleId(s);
     }
     setState(() {
       _mergeMode = false;
@@ -188,6 +189,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       try {
         d.deleteSync(recursive: true);
         await TagDb().deleteSetting('cover:${d.path}');
+        await TagDb().deleteTitleId(d.path);
       } catch (_) {
         // Skip folders that fail to delete.
       }
@@ -497,6 +499,18 @@ class _GameDetail extends StatefulWidget {
 
 class _GameDetailState extends State<_GameDetail> {
   late Directory game = widget.game;
+  String? _titleId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTitleId();
+  }
+
+  Future<void> _loadTitleId() async {
+    final tid = await TagDb().titleIdForFolder(game.path);
+    if (mounted) setState(() => _titleId = tid);
+  }
 
   /// Renames the game folder (and its cover cache key) to a corrected title.
   Future<void> _rename() async {
@@ -542,6 +556,12 @@ class _GameDetailState extends State<_GameDetail> {
       if (cover != null) {
         await db.saveSetting('cover:$newPath', cover);
         await db.deleteSetting('cover:${game.path}');
+      }
+      // Move the title-ID key along with the folder.
+      final tid = await db.titleIdForFolder(game.path);
+      if (tid != null) {
+        await db.saveTitleId(newPath, tid);
+        await db.deleteTitleId(game.path);
       }
       if (!mounted) return;
       setState(() => game = Directory(newPath));
@@ -603,6 +623,15 @@ class _GameDetailState extends State<_GameDetail> {
       ),
       body: ListView(
         children: [
+          if (_titleId != null)
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.tag),
+              title: Text('Title ID: $_titleId'),
+              subtitle: const Text(
+                  'Used to match updates to this game. If blank, no title ID '
+                  'was found in the filename.'),
+            ),
           if (files.isNotEmpty) ...[
             const Padding(
               padding: EdgeInsets.all(12),
@@ -667,6 +696,7 @@ class _GameDetailState extends State<_GameDetail> {
                       try {
                         game.deleteSync(recursive: true);
                         await TagDb().deleteSetting('cover:${game.path}');
+                        await TagDb().deleteTitleId(game.path);
                         messenger.showSnackBar(
                           const SnackBar(content: Text('Empty folder removed.')),
                         );

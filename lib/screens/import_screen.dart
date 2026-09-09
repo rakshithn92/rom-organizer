@@ -93,6 +93,17 @@ class _ImportScreenState extends State<ImportScreen> {
     return candidate;
   }
 
+  /// Resolves the target game folder for [fileName] by title ID first. The
+  /// base game and its updates share the same title ID, so an update with a
+  /// title ID in its filename lands in the base's folder regardless of how the
+  /// titles differ. Returns null if no title ID match is found (caller falls
+  /// back to name-based resolution).
+  Future<String?> _resolveTargetByTitleId(String fileName) async {
+    final id = TitleParser.titleId(fileName);
+    if (id == null) return null;
+    return _db.folderForTitleId(id);
+  }
+
   Future<void> _autoImport() async {
     final files = RomScanner().findImportables(_current);
     if (files.isEmpty) {
@@ -147,12 +158,19 @@ class _ImportScreenState extends State<ImportScreen> {
       }
       final isArchive = kArchiveExtensions.contains(ext);
       final title = await _resolveTitle(TitleParser.clean(p.basename(path)));
+      // Match by title ID first (base + updates share the same ID).
+      final target = await _resolveTargetByTitleId(p.basename(path));
 
       final result = isArchive
-          ? await importer.importArchive(path, title)
-          : await importer.importFile(path, title);
+          ? await importer.importArchive(path, title, targetFolder: target)
+          : await importer.importFile(path, title, targetFolder: target);
       if (result.error == null) {
         imported++;
+        // Store the title ID on the base folder so future updates can match.
+        if (!isArchive && result.baseFiles > 0) {
+          final id = TitleParser.titleId(p.basename(path));
+          if (id != null) await _db.saveTitleId(result.gameFolder, id);
+        }
         // Delete the archive only if the user chose to.
         if (isArchive && result.fullyExtracted && deleteArchives) {
           try {
@@ -236,13 +254,15 @@ class _ImportScreenState extends State<ImportScreen> {
     );
     if (title == null || title.isEmpty) return;
 
-    // 4. Import: extract a zip, or move a loose ROM.
+    // 4. Import: extract a zip, or move a loose ROM. Match by title ID first
+    //    (base + updates share the same ID) so an update lands in its base.
     if (!mounted) return;
     setState(() => _busy = true);
     final importer = Importer(_libraryRoot);
+    final target = await _resolveTargetByTitleId(p.basename(file.path));
     final result = isArchive
-        ? await importer.importArchive(file.path, title)
-        : await importer.importFile(file.path, title);
+        ? await importer.importArchive(file.path, title, targetFolder: target)
+        : await importer.importFile(file.path, title, targetFolder: target);
     if (!mounted) return;
     setState(() => _busy = false);
     if (!mounted) return;
@@ -253,6 +273,13 @@ class _ImportScreenState extends State<ImportScreen> {
       );
       return;
     }
+
+    // Store the title ID on the base folder so future updates can match.
+    if (!isArchive && result.baseFiles > 0) {
+      final id = TitleParser.titleId(p.basename(file.path));
+      if (id != null) await _db.saveTitleId(result.gameFolder, id);
+    }
+    if (!mounted) return;
 
     // 5. For archives only: if fully extracted, offer to delete the archive to
     //    reclaim space. Loose ROMs are moved (not copied), so nothing to delete.

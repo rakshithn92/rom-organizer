@@ -54,4 +54,28 @@ class TagDb {
     final db = await _database;
     await db.delete('settings', where: 'key = ?', whereArgs: [key]);
   }
+
+  // ---- Title-ID metadata (base game <-> update matching) ----
+  // Stored as settings rows keyed "titleid:<folderPath>" = "<titleId>".
+
+  Future<void> saveTitleId(String folderPath, String titleId) =>
+      saveSetting('titleid:$folderPath', titleId);
+
+  Future<String?> titleIdForFolder(String folderPath) =>
+      getSetting('titleid:$folderPath');
+
+  Future<void> deleteTitleId(String folderPath) =>
+      deleteSetting('titleid:$folderPath');
+
+  /// Returns the folder path that has [titleId] stored, or null.
+  Future<String?> folderForTitleId(String titleId) async {
+    final db = await _database;
+    final rows = await db.query('settings', where: "key LIKE 'titleid:%'");
+    for (final r in rows) {
+      if (r['value'] == titleId) {
+        return (r['key'] as String).substring('titleid:'.length);
+      }
+    }
+    return null;
+  }
 }

@@ -92,8 +92,12 @@ class Importer {
   /// Imports [archivePath] into a new folder named [gameTitle] under
   /// [libraryRoot]. Returns the result; on failure, [ImportResult.error] is
   /// set. If the archive contains no Switch ROM files, [error] explains that.
-  Future<ImportResult> importArchive(String archivePath, String gameTitle) async {
-    final gameFolder = _resolveGameFolder(gameTitle);
+  Future<ImportResult> importArchive(
+    String archivePath,
+    String gameTitle, {
+    String? targetFolder,
+  }) async {
+    final gameFolder = targetFolder ?? _resolveGameFolder(gameTitle);
     try {
       final bytes = await File(archivePath).readAsBytes();
       final archive = _decode(archivePath, bytes);
@@ -179,9 +183,13 @@ class Importer {
   /// allowed to create a new folder on its own, otherwise every update import
   /// spawns an orphan folder with no base ROM (which then shows up as an
   /// "empty game" in the library).
-  Future<ImportResult> importFile(String filePath, String gameTitle) async {
+  Future<ImportResult> importFile(
+    String filePath,
+    String gameTitle, {
+    String? targetFolder,
+  }) async {
     final kind = ZipClassifier.classifyPath(p.basename(filePath));
-    final gameFolder = _resolveGameFolder(gameTitle);
+    final gameFolder = targetFolder ?? _resolveGameFolder(gameTitle);
 
     // Update/DLC without an existing base-game folder -> refuse, don't create.
     if (kind != RomEntryKind.base && !Directory(gameFolder).existsSync()) {
