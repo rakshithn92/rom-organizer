@@ -126,5 +126,28 @@ void main() {
       final result = await Importer(root).importZip(zipPath, 'Bad');
       expect(result.error, isNotNull);
     });
+
+    test('importFile moves a loose base ROM into the game folder', () async {
+      final romPath = '${tmp.path}/Game.nsp';
+      File(romPath).writeAsBytesSync([1, 2, 3]);
+      final result = await Importer(root).importFile(romPath, 'My Game');
+      expect(result.error, isNull);
+      expect(result.baseFiles, 1);
+      expect(File('$root/My Game/Game.nsp').existsSync(), isTrue);
+      // Original is moved, not copied.
+      expect(File(romPath).existsSync(), isFalse);
+    });
+
+    test('importFile routes an update file into the update/ subfolder', () async {
+      final romPath = '${tmp.path}/Game.Update.v1.6.0.nsp';
+      File(romPath).writeAsBytesSync([1, 2, 3]);
+      final result = await Importer(root).importFile(romPath, 'My Game');
+      expect(result.error, isNull);
+      expect(result.updateFiles, 1);
+      expect(
+        File('$root/My Game/update/Game.Update.v1.6.0.nsp').existsSync(),
+        isTrue,
+      );
+    });
   });
 }

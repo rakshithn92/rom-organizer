@@ -6,8 +6,10 @@ separated, and reclaim space by deleting fully-extracted zips.
 
 ## Features
 
-- **Import pipeline** — browse to a `.zip`, auto-resolve the real game title
-  from TheGamesDB (editable), and extract it into a per-game folder.
+- **Import pipeline** — browse to a `.zip` **or an already-extracted `.nsp` /
+  `.xci` ROM**, auto-resolve the real game title from TheGamesDB (editable),
+  and organize it into a per-game folder. The import view starts in
+  `Download/` by default.
 - **Clean layout** — each game gets its own folder, with update files in an
   `update/` subfolder:
   ```
@@ -17,9 +19,10 @@ separated, and reclaim space by deleting fully-extracted zips.
       update/
         ...Update.v1.6.0.nsp
   ```
-- **Space reclaim** — after extraction, the app verifies every zip entry landed
-  on disk and offers to delete the zip. If extraction was incomplete, the zip
-  is kept for safety.
+- **Zips are extracted; loose ROMs are moved.** A zip is extracted and, once
+  verified fully extracted, you're offered to delete it to reclaim space. An
+  already-extracted `.nsp`/`.xci` is moved into the library (no copy, no
+  leftover).
 - **Library view** — grid of your games with cover art (fetched from
   TheGamesDB and cached locally), an "has update" badge, and a detail view
   listing base + update files.

@@ -113,6 +113,40 @@ class Importer {
     }
   }
 
+  /// Moves an already-extracted ROM file into the organized library layout.
+  /// The file is classified (base/update/dlc) and placed in the game folder
+  /// (or its update/ dlc/ subfolder), keeping its original filename.
+  Future<ImportResult> importFile(String filePath, String gameTitle) async {
+    final gameFolder = p.join(libraryRoot, gameTitle);
+    try {
+      final kind = ZipClassifier.classifyPath(p.basename(filePath));
+      final destDir = switch (kind) {
+        RomEntryKind.update => p.join(gameFolder, 'update'),
+        RomEntryKind.dlc => p.join(gameFolder, 'dlc'),
+        _ => gameFolder,
+      };
+      Directory(destDir).createSync(recursive: true);
+      final dest = p.join(destDir, p.basename(filePath));
+      File(filePath).renameSync(dest);
+      return ImportResult(
+        gameFolder: gameFolder,
+        baseFiles: kind == RomEntryKind.base ? 1 : 0,
+        updateFiles: kind == RomEntryKind.update ? 1 : 0,
+        dlcFiles: kind == RomEntryKind.dlc ? 1 : 0,
+        fullyExtracted: true,
+      );
+    } catch (e) {
+      return ImportResult(
+        gameFolder: gameFolder,
+        baseFiles: 0,
+        updateFiles: 0,
+        dlcFiles: 0,
+        fullyExtracted: false,
+        error: e.toString(),
+      );
+    }
+  }
+
   /// True if every file entry in [archive] now exists on disk under [root]
   /// (base files at root, update/dlc in their subfolders).
   bool _verify(Archive archive, String root) {

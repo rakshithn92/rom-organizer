@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../services/importer.dart';
+import '../services/rom_scanner.dart';
 import '../services/tag_db.dart';
 import '../services/thegamesdb_client.dart';
 import '../services/title_parser.dart';
@@ -20,11 +21,13 @@ class ImportScreen extends StatefulWidget {
 
 class _ImportScreenState extends State<ImportScreen> {
   static const _libraryRoot = '/storage/emulated/0/ROMs/Switch';
+  static const _defaultStart = '/storage/emulated/0/Download';
   final TagDb _db = TagDb();
 
-  Directory _current = Directory('/storage/emulated/0');
+  Directory _current = Directory(_defaultStart);
   List<Directory> _subdirs = [];
   List<File> _zips = [];
+  List<File> _roms = [];
   bool _busy = false;
 
   @override
@@ -36,12 +39,18 @@ class _ImportScreenState extends State<ImportScreen> {
   Future<void> _load() async {
     final dirs = <Directory>[];
     final zips = <File>[];
+    final roms = <File>[];
     try {
       for (final e in _current.listSync(followLinks: false)) {
         if (e is Directory) {
           dirs.add(e);
-        } else if (e is File && p.extension(e.path).toLowerCase() == '.zip') {
-          zips.add(e);
+        } else if (e is File) {
+          final ext = p.extension(e.path).toLowerCase();
+          if (ext == '.zip') {
+            zips.add(e);
+          } else if (kSwitchRomExtensions.contains(ext)) {
+            roms.add(e);
+          }
         }
       }
     } catch (_) {
@@ -49,10 +58,12 @@ class _ImportScreenState extends State<ImportScreen> {
     }
     dirs.sort((a, b) => a.path.compareTo(b.path));
     zips.sort((a, b) => a.path.compareTo(b.path));
+    roms.sort((a, b) => a.path.compareTo(b.path));
     if (!mounted) return;
     setState(() {
       _subdirs = dirs;
       _zips = zips;
+      _roms = roms;
     });
   }
 
@@ -68,11 +79,11 @@ class _ImportScreenState extends State<ImportScreen> {
     _load();
   }
 
-  Future<void> _import(File zip) async {
+  Future<void> _import(File file, {required bool isZip}) async {
     setState(() => _busy = true);
 
     // 1. Candidate title from the filename.
-    final candidate = TitleParser.clean(p.basename(zip.path));
+    final candidate = TitleParser.clean(p.basename(file.path));
 
     // 2. Look up the real title from TheGamesDB (if a key is set).
     var resolved = candidate;
@@ -114,10 +125,13 @@ class _ImportScreenState extends State<ImportScreen> {
     );
     if (title == null || title.isEmpty) return;
 
-    // 4. Extract.
+    // 4. Import: extract a zip, or move a loose ROM.
     if (!mounted) return;
     setState(() => _busy = true);
-    final result = await Importer(_libraryRoot).importZip(zip.path, title);
+    final importer = Importer(_libraryRoot);
+    final result = isZip
+        ? await importer.importZip(file.path, title)
+        : await importer.importFile(file.path, title);
     if (!mounted) return;
     setState(() => _busy = false);
     if (!mounted) return;
@@ -129,8 +143,9 @@ class _ImportScreenState extends State<ImportScreen> {
       return;
     }
 
-    // 5. Delete-check: if fully extracted, offer to delete the zip.
-    if (result.fullyExtracted) {
+    // 5. For zips only: if fully extracted, offer to delete the zip to
+    //    reclaim space. Loose ROMs are moved (not copied), so nothing to delete.
+    if (isZip && result.fullyExtracted) {
       final delete = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -154,7 +169,7 @@ class _ImportScreenState extends State<ImportScreen> {
       );
       if (delete == true) {
         try {
-          zip.deleteSync();
+          file.deleteSync();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Zip deleted — space reclaimed.')),
@@ -199,7 +214,7 @@ class _ImportScreenState extends State<ImportScreen> {
                     title: Text(p.basename(d.path)),
                     onTap: () => _enter(d),
                   ),
-                if (_subdirs.isNotEmpty && _zips.isNotEmpty)
+                if (_subdirs.isNotEmpty && (_zips.isNotEmpty || _roms.isNotEmpty))
                   const Divider(),
                 for (final z in _zips)
                   ListTile(
@@ -207,12 +222,20 @@ class _ImportScreenState extends State<ImportScreen> {
                     title: Text(p.basename(z.path)),
                     subtitle: Text(_sizeLabel(z.lengthSync())),
                     trailing: const Icon(Icons.arrow_forward),
-                    onTap: () => _import(z),
+                    onTap: () => _import(z, isZip: true),
                   ),
-                if (_subdirs.isEmpty && _zips.isEmpty)
+                for (final r in _roms)
+                  ListTile(
+                    leading: const Icon(Icons.videogame_asset),
+                    title: Text(p.basename(r.path)),
+                    subtitle: Text(_sizeLabel(r.lengthSync())),
+                    trailing: const Icon(Icons.arrow_forward),
+                    onTap: () => _import(r, isZip: false),
+                  ),
+                if (_subdirs.isEmpty && _zips.isEmpty && _roms.isEmpty)
                   const Padding(
                     padding: EdgeInsets.all(32),
-                    child: Center(child: Text('No zips in this folder')),
+                    child: Center(child: Text('No zips or ROMs in this folder')),
                   ),
               ],
             ),
