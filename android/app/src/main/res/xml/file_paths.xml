@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- FileProvider path mapping. The library lives under /storage/emulated/0/ROMs,
-     so we expose that subtree to emulators via content:// URIs. -->
-<paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-path name="roms" path="ROMs/" />
-</paths>
