@@ -232,5 +232,61 @@ void main() {
       // The JP folder is gone (its only file moved out).
       expect(Directory('$root/My Game JP').existsSync(), isFalse);
     });
+
+    test('deleteOldUpdates keeps only the highest version', () async {
+      Directory('$root/My Game/update').createSync(recursive: true);
+      File('$root/My Game/update/Game.v1.6.0.nsp').writeAsBytesSync([1]);
+      File('$root/My Game/update/Game.v1.7.0.nsp').writeAsBytesSync([2]);
+      File('$root/My Game/update/Game.v1.5.0.nsp').writeAsBytesSync([3]);
+
+      final deleted = Importer(root).deleteOldUpdates('$root/My Game');
+
+      expect(deleted, 2);
+      expect(
+        File('$root/My Game/update/Game.v1.7.0.nsp').existsSync(),
+        isTrue,
+      );
+      expect(
+        File('$root/My Game/update/Game.v1.6.0.nsp').existsSync(),
+        isFalse,
+      );
+      expect(
+        File('$root/My Game/update/Game.v1.5.0.nsp').existsSync(),
+        isFalse,
+      );
+    });
+
+    test('deleteOldUpdates leaves a single update and unparseable files alone',
+        () async {
+      Directory('$root/My Game/update').createSync(recursive: true);
+      File('$root/My Game/update/Game.v1.6.0.nsp').writeAsBytesSync([1]);
+      File('$root/My Game/update/Game.weird.nsp').writeAsBytesSync([2]);
+
+      final deleted = Importer(root).deleteOldUpdates('$root/My Game');
+
+      expect(deleted, 0);
+      expect(
+        File('$root/My Game/update/Game.v1.6.0.nsp').existsSync(),
+        isTrue,
+      );
+      expect(
+        File('$root/My Game/update/Game.weird.nsp').existsSync(),
+        isTrue,
+      );
+    });
+
+    test('findMissingUpdates flags games with base but no update', () async {
+      Directory('$root/Game A').createSync(recursive: true);
+      File('$root/Game A/Game.nsp').writeAsBytesSync([1]);
+      Directory('$root/Game B').createSync(recursive: true);
+      File('$root/Game B/Game.nsp').writeAsBytesSync([2]);
+      Directory('$root/Game B/update').createSync(recursive: true);
+      File('$root/Game B/update/Game.v1.6.0.nsp').writeAsBytesSync([3]);
+
+      final missing = Importer(root).findMissingUpdates();
+
+      expect(missing.length, 1);
+      expect(missing.single, endsWith('Game A'));
+    });
   });
 }

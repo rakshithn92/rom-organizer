@@ -4,6 +4,7 @@ import 'package:archive/archive.dart';
 import 'package:path/path.dart' as p;
 
 import 'rom_scanner.dart';
+import 'version_parser.dart';
 import 'zip_classifier.dart';
 
 /// Result of importing one archive.
@@ -221,6 +222,64 @@ class Importer {
         fullyExtracted: false,
         error: message,
       );
+
+  /// Deletes old update files in a game's `update/` folder, keeping only the
+  /// highest-versioned one. Returns the number of files deleted. Files with no
+  /// parseable version are kept (never guessed). The base game is untouched.
+  int deleteOldUpdates(String gameFolder) {
+    final updateDir = Directory(p.join(gameFolder, 'update'));
+    if (!updateDir.existsSync()) return 0;
+
+    final updates = <File>[];
+    for (final e in updateDir.listSync(followLinks: false)) {
+      if (e is File) updates.add(e);
+    }
+    if (updates.length < 2) return 0;
+
+    // Group by base name (strip version), keep the highest version per group.
+    final byBase = <String, List<File>>{};
+    for (final f in updates) {
+      final v = VersionParser.parse(p.basename(f.path));
+      if (v == null) continue; // never touch unparseable files
+      final base = p.basenameWithoutExtension(f.path)
+          .replaceAll(RegExp(r'v\d+(\.\d+)*', caseSensitive: false), '')
+          .trim();
+      byBase.putIfAbsent(base, () => []).add(f);
+    }
+
+    var deleted = 0;
+    for (final group in byBase.values) {
+      if (group.length < 2) continue;
+      group.sort((a, b) => VersionParser
+          .parse(p.basename(b.path))!
+          .compareTo(VersionParser.parse(p.basename(a.path))!));
+      for (final old in group.skip(1)) {
+        try {
+          old.deleteSync();
+          deleted++;
+        } catch (_) {
+          // Skip files that fail to delete.
+        }
+      }
+    }
+    return deleted;
+  }
+
+  /// Returns the paths of game folders that have a base file but no `update/`
+  /// folder (i.e. the game is missing its update).
+  List<String> findMissingUpdates() {
+    final root = Directory(libraryRoot);
+    if (!root.existsSync()) return [];
+    final missing = <String>[];
+    for (final e in root.listSync(followLinks: false)) {
+      if (e is Directory) {
+        final hasBase = e.listSync(followLinks: false).any((f) => f is File);
+        final hasUpdate = Directory(p.join(e.path, 'update')).existsSync();
+        if (hasBase && !hasUpdate) missing.add(e.path);
+      }
+    }
+    return missing;
+  }
 
   /// Merges [sourceFolders] into [targetFolder], moving every file into the
   /// target's layout (base -> root, update/ -> update/, dlc/ -> dlc/), then

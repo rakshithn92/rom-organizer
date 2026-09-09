@@ -162,6 +162,58 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  /// Runs library maintenance: deletes old update files (keeping the latest
+  /// version per game) and reports which games are missing an update.
+  Future<void> _maintain() async {
+    final importer = Importer(_libraryRoot);
+    var deleted = 0;
+    for (final g in _games) {
+      deleted += importer.deleteOldUpdates(g.path);
+    }
+    final missing = importer.findMissingUpdates();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          deleted > 0
+              ? 'Deleted $deleted old update file(s).'
+              : 'No old updates to delete.',
+        ),
+      ),
+    );
+    if (missing.isNotEmpty) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Missing updates'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                const Text('These games have a base file but no update:'),
+                const SizedBox(height: 8),
+                for (final m in missing)
+                  ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.system_update_alt),
+                    title: Text(p.basename(m)),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    }
+    _load();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -186,6 +238,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
             icon: const Icon(Icons.cleaning_services),
             tooltip: 'Remove empty folders',
             onPressed: _cleanupEmpty,
+          ),
+          IconButton(
+            icon: const Icon(Icons.system_update_alt),
+            tooltip: 'Delete old updates + find missing',
+            onPressed: _maintain,
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
