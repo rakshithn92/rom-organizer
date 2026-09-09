@@ -48,11 +48,28 @@ class Importer {
 
   Importer(this.libraryRoot);
 
+  /// Resolves the game folder for [gameTitle]. If a folder with the same name
+  /// already exists (case-insensitive), returns it so the import MERGES into
+  /// the existing game instead of creating a duplicate folder. Otherwise
+  /// returns the new path.
+  String _resolveGameFolder(String gameTitle) {
+    final root = Directory(libraryRoot);
+    if (root.existsSync()) {
+      for (final e in root.listSync(followLinks: false)) {
+        if (e is Directory &&
+            e.path.split('/').last.toLowerCase() == gameTitle.toLowerCase()) {
+          return e.path;
+        }
+      }
+    }
+    return p.join(libraryRoot, gameTitle);
+  }
+
   /// Imports [archivePath] into a new folder named [gameTitle] under
   /// [libraryRoot]. Returns the result; on failure, [ImportResult.error] is
   /// set. If the archive contains no Switch ROM files, [error] explains that.
   Future<ImportResult> importArchive(String archivePath, String gameTitle) async {
-    final gameFolder = p.join(libraryRoot, gameTitle);
+    final gameFolder = _resolveGameFolder(gameTitle);
     try {
       final bytes = await File(archivePath).readAsBytes();
       final archive = _decode(archivePath, bytes);
@@ -116,7 +133,7 @@ class Importer {
   /// The file is classified (base/update/dlc) and placed in the game folder
   /// (or its update/ dlc/ subfolder), keeping its original filename.
   Future<ImportResult> importFile(String filePath, String gameTitle) async {
-    final gameFolder = p.join(libraryRoot, gameTitle);
+    final gameFolder = _resolveGameFolder(gameTitle);
     try {
       final kind = ZipClassifier.classifyPath(p.basename(filePath));
       final destDir = switch (kind) {

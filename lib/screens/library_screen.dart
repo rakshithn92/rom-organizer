@@ -167,6 +167,7 @@ class _GameDetail extends StatelessWidget {
   Widget build(BuildContext context) {
     final files = <File>[];
     final updateFiles = <File>[];
+    final dlcFiles = <File>[];
     for (final e in game.listSync(followLinks: false)) {
       if (e is File) files.add(e);
     }
@@ -174,6 +175,12 @@ class _GameDetail extends StatelessWidget {
     if (updateDir.existsSync()) {
       for (final e in updateDir.listSync(followLinks: false)) {
         if (e is File) updateFiles.add(e);
+      }
+    }
+    final dlcDir = Directory(p.join(game.path, 'dlc'));
+    if (dlcDir.existsSync()) {
+      for (final e in dlcDir.listSync(followLinks: false)) {
+        if (e is File) dlcFiles.add(e);
       }
     }
 
@@ -205,7 +212,19 @@ class _GameDetail extends StatelessWidget {
                 title: Text(p.basename(f.path)),
               ),
           ],
-          if (files.isEmpty && updateFiles.isEmpty)
+          if (dlcFiles.isNotEmpty) ...[
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: Text('DLC',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            for (final f in dlcFiles)
+              ListTile(
+                leading: const Icon(Icons.add_box),
+                title: Text(p.basename(f.path)),
+              ),
+          ],
+          if (files.isEmpty && updateFiles.isEmpty && dlcFiles.isEmpty)
             const Padding(
               padding: EdgeInsets.all(32),
               child: Center(child: Text('Empty game folder')),

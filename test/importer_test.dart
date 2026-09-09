@@ -175,5 +175,31 @@ void main() {
         isTrue,
       );
     });
+
+    test('import merges into an existing game folder (case-insensitive)', () async {
+      // First import creates the folder.
+      final base = '${tmp.path}/Game.nsp';
+      File(base).writeAsBytesSync([1, 2, 3]);
+      await Importer(root).importFile(base, 'My Game');
+
+      // Second import of an update with a slightly different title casing
+      // must MERGE into the same folder, not create a duplicate.
+      final upd = '${tmp.path}/Game.Update.v1.6.0.nsp';
+      File(upd).writeAsBytesSync([4, 5, 6]);
+      final result = await Importer(root).importFile(upd, 'my game');
+
+      expect(result.error, isNull);
+      expect(File('$root/My Game/Game.nsp').existsSync(), isTrue);
+      expect(
+        File('$root/My Game/update/Game.Update.v1.6.0.nsp').existsSync(),
+        isTrue,
+      );
+      // Only ONE game folder exists.
+      final folders = Directory(root)
+          .listSync(followLinks: false)
+          .whereType<Directory>()
+          .length;
+      expect(folders, 1);
+    });
   });
 }

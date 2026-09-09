@@ -42,7 +42,9 @@ class TheGamesDbClient {
     final games = data?['games'] as List<dynamic>?;
     if (games == null || games.isEmpty) return null;
 
-    // Prefer a Switch-platform match; fall back to the first result.
+    // Prefer a Switch-platform match. Only a Switch match's boxart is shown —
+    // a wrong-platform fallback would show a mismatched cover (e.g. Pokemon
+    // Crystal showing Pokemon Gold's boxart).
     Map<String, dynamic>? pick;
     for (final g in games) {
       final game = g as Map<String, dynamic>;
@@ -51,7 +53,15 @@ class TheGamesDbClient {
         break;
       }
     }
-    pick ??= games.first as Map<String, dynamic>;
+    if (pick == null) {
+      // No Switch match — return the first title but NO boxart, so the app
+      // never shows a cover for the wrong game.
+      final first = games.first as Map<String, dynamic>;
+      return GameMetadata(
+        title: (first['game_title'] ?? query) as String,
+        boxartUrl: null,
+      );
+    }
 
     final id = pick['id']?.toString();
     final title = (pick['game_title'] ?? query) as String;
