@@ -1,8 +1,6 @@
 name: rom_organizer
-description: "A new Flutter project."
-# The following line prevents the package from being accidentally published to
-# pub.dev using `flutter pub publish`. This is preferred for private packages.
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+description: "Organize your Nintendo Switch ROM library on Android: import zips, auto-title from TheGamesDB, extract to per-game folders with updates separated, and reclaim space by deleting fully-extracted zips."
+publish_to: 'none'
 
 # The following defines the version and build number for your application.
 # A version number is three numbers separated by dots, like 1.2.43

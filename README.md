@@ -1,17 +1,72 @@
-# rom_organizer
+# ROM Organizer
 
-A new Flutter project.
+Organize your Nintendo Switch ROM library on Android. Import zips, auto-title
+them from TheGamesDB, extract into clean per-game folders with updates
+separated, and reclaim space by deleting fully-extracted zips.
 
-## Getting Started
+## Features
 
-This project is a starting point for a Flutter application.
+- **Import pipeline** — browse to a `.zip`, auto-resolve the real game title
+  from TheGamesDB (editable), and extract it into a per-game folder.
+- **Clean layout** — each game gets its own folder, with update files in an
+  `update/` subfolder:
+  ```
+  /storage/emulated/0/ROMs/Switch/
+    The Legend of Zelda - Breath of the Wild/
+      The.Legend.of.Zelda.Breath.of.the.Wild.nsp
+      update/
+        ...Update.v1.6.0.nsp
+  ```
+- **Space reclaim** — after extraction, the app verifies every zip entry landed
+  on disk and offers to delete the zip. If extraction was incomplete, the zip
+  is kept for safety.
+- **Library view** — grid of your games with cover art (fetched from
+  TheGamesDB and cached locally), an "has update" badge, and a detail view
+  listing base + update files.
+- **Recognized formats** — `.nsp`, `.xci`, `.nsz`, `.xcz`, `.nca`.
 
-A few resources to get you started if this is your first Flutter project:
+## Requirements
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+- Android device with **all-files access** granted (the app prompts on first
+  launch). This is a sideloaded tool — it is **not** on the Play Store.
+- A free **TheGamesDB API key** for title + cover-art lookup. Create an account
+  at [thegamesdb.net](https://thegamesdb.net), then grab your key at
+  [api.thegamesdb.net/key.php](https://api.thegamesdb.net/key.php). Paste it in
+  the app's **Settings** screen. The key is stored only on your device.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Install
+
+Download the latest `app-release.apk` from the
+[Releases](https://github.com/rakshithn92/rom-organizer/releases) page and
+sideload it. You may need to allow "install from unknown sources" for your
+browser/file manager.
+
+## Build from source
+
+```bash
+flutter pub get
+flutter analyze
+flutter test
+flutter build apk --release
+# APK at build/app/outputs/flutter-apk/app-release.apk
+```
+
+## How it works
+
+- **Zip classification** — entries are classified as base / update / dlc by
+  filename markers and `update/` folder paths.
+- **Title parsing** — region tags (`[USA]`), version tags (`v1.6.0`), and
+  title-IDs (`0100...`) are stripped from filenames to build a clean search
+  query.
+- **Metadata** — TheGamesDB `ByGameName` is queried for the Switch platform;
+  the resolved title and boxart are used for the folder name and cover.
+
+## Privacy
+
+- All ROM files stay on your device. Nothing is uploaded.
+- The only network calls are to TheGamesDB for title/cover lookup.
+- Your API key is stored locally in the app's SQLite database.
+
+## License
+
+[MIT](LICENSE)
