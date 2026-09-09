@@ -144,7 +144,7 @@ class Importer {
       };
       Directory(destDir).createSync(recursive: true);
       final dest = p.join(destDir, p.basename(filePath));
-      File(filePath).renameSync(dest);
+      _moveFile(filePath, dest);
       return ImportResult(
         gameFolder: gameFolder,
         baseFiles: kind == RomEntryKind.base ? 1 : 0,
@@ -154,6 +154,18 @@ class Importer {
       );
     } catch (e) {
       return _err(gameFolder, e.toString());
+    }
+  }
+
+  /// Moves [src] to [dest], falling back to copy+delete when a direct rename
+  /// fails. Android can throw "Operation not permitted" (EPERM) on some paths
+  /// even with all-files access, so rename alone is not reliable.
+  void _moveFile(String src, String dest) {
+    try {
+      File(src).renameSync(dest);
+    } catch (_) {
+      File(src).copySync(dest);
+      File(src).deleteSync();
     }
   }
 
@@ -296,7 +308,7 @@ class Importer {
         if (e is File) {
           final dest = p.join(targetFolder, p.basename(e.path));
           if (!File(dest).existsSync()) {
-            e.renameSync(dest);
+            _moveFile(e.path, dest);
             moved++;
           }
         } else if (e is Directory) {
@@ -308,7 +320,7 @@ class Importer {
               if (f is File) {
                 final dest = p.join(destDir, p.basename(f.path));
                 if (!File(dest).existsSync()) {
-                  f.renameSync(dest);
+                  _moveFile(f.path, dest);
                   moved++;
                 }
               }

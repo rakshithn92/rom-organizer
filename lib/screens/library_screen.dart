@@ -454,7 +454,14 @@ class _GameDetailState extends State<_GameDetail> {
       // Move the cover cache key along with the folder.
       final db = TagDb();
       final cover = await db.getSetting('cover:${game.path}');
-      game.renameSync(newPath);
+      // Rename the folder, falling back to copy+delete if rename fails
+      // (Android can throw "Operation not permitted" on some paths).
+      try {
+        game.renameSync(newPath);
+      } catch (_) {
+        _copyDir(game, newPath);
+        game.deleteSync(recursive: true);
+      }
       if (cover != null) {
         await db.saveSetting('cover:$newPath', cover);
         await db.saveSetting('cover:${game.path}', '');
@@ -469,6 +476,18 @@ class _GameDetailState extends State<_GameDetail> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Rename failed: $e')),
         );
+      }
+    }
+  }
+
+  /// Recursively copies [src] to [dest] (used when a folder rename fails).
+  void _copyDir(Directory src, String dest) {
+    Directory(dest).createSync(recursive: true);
+    for (final e in src.listSync(followLinks: false)) {
+      if (e is File) {
+        File(e.path).copySync(p.join(dest, p.basename(e.path)));
+      } else if (e is Directory) {
+        _copyDir(e, p.join(dest, p.basename(e.path)));
       }
     }
   }
