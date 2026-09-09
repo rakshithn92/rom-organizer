@@ -492,7 +492,39 @@ class _GameDetailState extends State<_GameDetail> {
       }
       return;
     }
-    final ok = await EmulatorLauncher.launch(rom.path);
+
+    // Detect installed emulators and show an in-app chooser.
+    final emulators = await EmulatorLauncher.listEmulators();
+    if (!mounted) return;
+
+    Emulator? pick;
+    if (emulators.isNotEmpty) {
+      pick = await showDialog<Emulator>(
+        context: context,
+        builder: (ctx) => SimpleDialog(
+          title: const Text('Open in emulator'),
+          children: [
+            for (final e in emulators)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(ctx, e),
+                child: Row(
+                  children: [
+                    const Icon(Icons.videogame_asset),
+                    const SizedBox(width: 12),
+                    Text(e.label),
+                  ],
+                ),
+              ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, null),
+              child: const Text('Other…'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final ok = await EmulatorLauncher.launch(rom.path, emulator: pick);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

@@ -60,5 +60,14 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Package visibility for Switch emulators (Android 11+). -->
+        <package android:name="org.yuzu.yuzu_emu" />
+        <package android:name="org.yuzu.yuzu_emu.ea" />
+        <package android:name="org.sudachi.sudachi_emu" />
+        <package android:name="org.citron.citron_emu" />
+        <package android:name="org.ryujinx.ryujinx" />
+        <package android:name="emu.skyline.online" />
+        <package android:name="org.strato.skyline" />
+        <package android:name="com.kaihei.egg" />
     </queries>
 </manifest>
