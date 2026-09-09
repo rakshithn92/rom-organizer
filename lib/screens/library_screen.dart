@@ -96,6 +96,72 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  /// True if a game folder has no files anywhere (base, update/, dlc/).
+  bool _isEmptyFolder(Directory dir) {
+    for (final e in dir.listSync(followLinks: false)) {
+      if (e is File) return false;
+      if (e is Directory) {
+        final sub = p.basename(e.path);
+        if (sub == 'update' || sub == 'dlc') {
+          if (e.listSync(followLinks: false).any((f) => f is File)) return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /// Deletes every game folder that contains no files (empty shells left over
+  /// from title splits or failed extractions). Never touches a folder with
+  /// any file in it, so real games are safe.
+  Future<void> _cleanupEmpty() async {
+    final empty = _games.where(_isEmptyFolder).toList();
+    if (empty.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No empty folders to clean up.')),
+        );
+      }
+      return;
+    }
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove empty folders?'),
+        content: Text(
+          '${empty.length} folder(s) contain no game files and will be '
+          'removed. This only deletes empty folders — no game files are '
+          'touched.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    for (final d in empty) {
+      try {
+        d.deleteSync(recursive: true);
+      } catch (_) {
+        // Skip folders that fail to delete.
+      }
+    }
+    _load();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Removed ${empty.length} empty folder(s).')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -116,6 +182,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
               tooltip: 'Merge duplicate folders',
               onPressed: () => setState(() => _mergeMode = true),
             ),
+          IconButton(
+            icon: const Icon(Icons.cleaning_services),
+            tooltip: 'Remove empty folders',
+            onPressed: _cleanupEmpty,
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _load,
