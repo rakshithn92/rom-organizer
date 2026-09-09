@@ -474,7 +474,7 @@ class _GameDetailState extends State<_GameDetail> {
     }
   }
 
-  /// Launches the game's base ROM in an installed emulator.
+  /// Launches the game's base ROM in whatever app the user picks.
   Future<void> _launch() async {
     // Find the first base ROM file in the game folder.
     File? rom;
@@ -493,44 +493,12 @@ class _GameDetailState extends State<_GameDetail> {
       return;
     }
 
-    // Detect installed emulators and show an in-app chooser.
-    final emulators = await EmulatorLauncher.listEmulators();
-    if (!mounted) return;
-
-    Emulator? pick;
-    if (emulators.isNotEmpty) {
-      pick = await showDialog<Emulator>(
-        context: context,
-        builder: (ctx) => SimpleDialog(
-          title: const Text('Open in emulator'),
-          children: [
-            for (final e in emulators)
-              SimpleDialogOption(
-                onPressed: () => Navigator.pop(ctx, e),
-                child: Row(
-                  children: [
-                    const Icon(Icons.videogame_asset),
-                    const SizedBox(width: 12),
-                    Text(e.label),
-                  ],
-                ),
-              ),
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(ctx, null),
-              child: const Text('Other…'),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final ok = await EmulatorLauncher.launch(rom.path, emulator: pick);
+    final ok = await EmulatorLauncher.launch(rom.path);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Could not launch. Install a Switch emulator (e.g. Yuzu, Sudachi) '
-            'and try again.',
+            'Could not launch. No app on this device can open the file.',
           ),
         ),
       );
