@@ -296,11 +296,17 @@ class _ImportScreenState extends State<ImportScreen> {
             : null,
         actions: [
           IconButton(
-            icon: const Icon(Icons.auto_awesome),
-            tooltip: 'Auto-import all ROMs in this folder',
-            onPressed: _busy ? null : _autoImport,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh',
+            onPressed: _busy ? null : _load,
           ),
         ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _busy ? null : _autoImport,
+        icon: const Icon(Icons.auto_awesome),
+        label: const Text('Scan & import'),
+        tooltip: 'Scan this folder and import all Switch ROMs',
       ),
       body: _busy
           ? const Center(child: CircularProgressIndicator())
