@@ -35,10 +35,10 @@ separated, and reclaim space by deleting fully-extracted zips.
 - **Recognized formats** — `.nsp`, `.xci`, `.nsz`, `.xcz`, `.nca`.
 
 > **Note on archives:** supported archive formats are `.zip`, `.tar`, `.gz`,
-> `.tgz`, `.bz2`, `.tbz2`, `.xz`, `.txz`. **7z is not decoded in-app** — the
-> underlying `archive` library has no 7z decoder. The app still *sees* `.7z`
-> files and prompts you to extract them with your device's built-in file
-> manager, then import the extracted `.nsp`/`.xci`.
+> `.tgz`, `.bz2`, `.tbz2`, `.xz`, `.txz`. **7z and rar are not decoded in-app**
+> — the underlying `archive` library has no decoders for them. The app still
+> *sees* `.7z`/`.rar` files and prompts you to extract them with your device's
+> built-in file manager, then import the extracted `.nsp`/`.xci`.
 
 ## Requirements
 

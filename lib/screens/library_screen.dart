@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import '../services/importer.dart';
 import '../services/tag_db.dart';
 import '../services/thegamesdb_client.dart';
 
@@ -22,6 +23,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
   List<Directory> _games = [];
   Map<String, String> _covers = {}; // game folder path -> boxart url
   bool _loading = true;
+  bool _mergeMode = false;
+  final Set<String> _selected = {}; // paths selected for merge
 
   @override
   void initState() {
@@ -68,12 +71,51 @@ class _LibraryScreenState extends State<LibraryScreen> {
     });
   }
 
+  /// Merges the selected folders into [target]. The target keeps its name and
+  /// cover; every file from the other selected folders is moved into it.
+  Future<void> _mergeInto(Directory target) async {
+    final sources = _selected.where((s) => s != target.path).toList();
+    if (sources.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Select at least one other folder to merge.')),
+        );
+      }
+      return;
+    }
+    final moved = Importer(_libraryRoot).mergeGames(target.path, sources);
+    setState(() {
+      _mergeMode = false;
+      _selected.clear();
+    });
+    _load();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Merged $moved file(s) into ${p.basename(target.path)}.')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Library'),
+        title: Text(_mergeMode ? 'Select folders to merge' : 'Library'),
         actions: [
+          if (_mergeMode)
+            TextButton(
+              onPressed: () => setState(() {
+                _mergeMode = false;
+                _selected.clear();
+              }),
+              child: const Text('Cancel'),
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.merge),
+              tooltip: 'Merge duplicate folders',
+              onPressed: () => setState(() => _mergeMode = true),
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _load,
@@ -89,28 +131,94 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     textAlign: TextAlign.center,
                   ),
                 )
-              : GridView.builder(
-                  padding: const EdgeInsets.all(12),
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 160,
-                    childAspectRatio: 0.7,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
-                  ),
-                  itemCount: _games.length,
-                  itemBuilder: (ctx, i) => _GameCard(
-                    game: _games[i],
-                    coverUrl: _covers[_games[i].path],
-                  ),
+              : Column(
+                  children: [
+                    Expanded(
+                      child: GridView.builder(
+                        padding: const EdgeInsets.all(12),
+                        gridDelegate:
+                            const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 160,
+                          childAspectRatio: 0.7,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                        ),
+                        itemCount: _games.length,
+                        itemBuilder: (ctx, i) => _GameCard(
+                          game: _games[i],
+                          coverUrl: _covers[_games[i].path],
+                          mergeMode: _mergeMode,
+                          selected: _selected.contains(_games[i].path),
+                          onTap: _mergeMode
+                              ? () => setState(() {
+                                    if (!_selected.add(_games[i].path)) {
+                                      _selected.remove(_games[i].path);
+                                    }
+                                  })
+                              : null,
+                        ),
+                      ),
+                    ),
+                    if (_mergeMode)
+                      SafeArea(
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '${_selected.length} selected. Tap a folder '
+                                  'again to deselect.',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ),
+                              FilledButton(
+                                onPressed: _selected.length < 2
+                                    ? null
+                                    : () => _pickTarget(),
+                                child: const Text('Merge into…'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
     );
+  }
+
+  /// After selecting folders, pick which one is the target (keeps its name).
+  Future<void> _pickTarget() async {
+    final target = await showDialog<Directory>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Merge into which folder?'),
+        children: [
+          for (final g in _games.where((g) => _selected.contains(g.path)))
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, g),
+              child: Text(p.basename(g.path)),
+            ),
+        ],
+      ),
+    );
+    if (target != null) await _mergeInto(target);
   }
 }
 
 class _GameCard extends StatelessWidget {
   final Directory game;
   final String? coverUrl;
-  const _GameCard({required this.game, required this.coverUrl});
+  final bool mergeMode;
+  final bool selected;
+  final VoidCallback? onTap;
+  const _GameCard({
+    required this.game,
+    required this.coverUrl,
+    this.mergeMode = false,
+    this.selected = false,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -118,40 +226,55 @@ class _GameCard extends StatelessWidget {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => _GameDetail(game: game)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        onTap: onTap ??
+            () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => _GameDetail(game: game)),
+                ),
+        child: Stack(
           children: [
-            Expanded(
-              child: coverUrl != null
-                  ? Image.network(coverUrl!, fit: BoxFit.cover)
-                  : const ColoredBox(
-                      color: Colors.black26,
-                      child: Center(child: Icon(Icons.videogame_asset, size: 40)),
-                    ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    p.basename(game.path),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: coverUrl != null
+                      ? Image.network(coverUrl!, fit: BoxFit.cover)
+                      : const ColoredBox(
+                          color: Colors.black26,
+                          child: Center(
+                              child: Icon(Icons.videogame_asset, size: 40)),
+                        ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        p.basename(game.path),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      if (hasUpdate)
+                        const Text(
+                          'has update',
+                          style: TextStyle(fontSize: 11, color: Colors.orange),
+                        ),
+                    ],
                   ),
-                  if (hasUpdate)
-                    const Text(
-                      'has update',
-                      style: TextStyle(fontSize: 11, color: Colors.orange),
-                    ),
-                ],
-              ),
+                ),
+              ],
             ),
+            if (mergeMode)
+              Positioned(
+                top: 4,
+                right: 4,
+                child: Icon(
+                  selected ? Icons.check_circle : Icons.circle_outlined,
+                  color: selected ? Colors.green : Colors.white,
+                ),
+              ),
           ],
         ),
       ),

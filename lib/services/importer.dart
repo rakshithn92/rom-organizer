@@ -25,11 +25,11 @@ class ImportResult {
 }
 
 /// Archive formats we can decode (via the `archive` package).
-/// NOTE: 7z is NOT decodable in-app — the `archive` package has no 7z
-/// decoder. `.7z` is still listed so the app can SEE those files and guide
-/// the user to extract them with Android's built-in extractor.
+/// NOTE: 7z and rar are NOT decodable in-app — the `archive` package has no
+/// decoders for them. They're still listed so the app can SEE those files and
+/// guide the user to extract them with Android's built-in extractor.
 const Set<String> kArchiveExtensions = {
-  '.zip', '.tar', '.gz', '.tgz', '.bz2', '.tbz2', '.xz', '.txz', '.7z',
+  '.zip', '.tar', '.gz', '.tgz', '.bz2', '.tbz2', '.xz', '.txz', '.7z', '.rar',
 };
 
 /// Extracts a game archive into the organized library layout:
@@ -221,6 +221,53 @@ class Importer {
         fullyExtracted: false,
         error: message,
       );
+
+  /// Merges [sourceFolders] into [targetFolder], moving every file into the
+  /// target's layout (base -> root, update/ -> update/, dlc/ -> dlc/), then
+  /// deletes the now-empty source folders. Returns the number of files moved.
+  /// Used to clean up duplicate game folders (e.g. an English and a Japanese
+  /// copy of the same game, or a base/update split across two folders).
+  int mergeGames(String targetFolder, List<String> sourceFolders) {
+    var moved = 0;
+    for (final src in sourceFolders) {
+      if (src == targetFolder) continue;
+      final srcDir = Directory(src);
+      if (!srcDir.existsSync()) continue;
+      for (final e in srcDir.listSync(followLinks: false)) {
+        if (e is File) {
+          final dest = p.join(targetFolder, p.basename(e.path));
+          if (!File(dest).existsSync()) {
+            e.renameSync(dest);
+            moved++;
+          }
+        } else if (e is Directory) {
+          final sub = p.basename(e.path);
+          if (sub == 'update' || sub == 'dlc') {
+            final destDir = p.join(targetFolder, sub);
+            Directory(destDir).createSync(recursive: true);
+            for (final f in e.listSync(followLinks: false)) {
+              if (f is File) {
+                final dest = p.join(destDir, p.basename(f.path));
+                if (!File(dest).existsSync()) {
+                  f.renameSync(dest);
+                  moved++;
+                }
+              }
+            }
+          }
+        }
+      }
+      // Remove the source folder if it's now empty (including empty
+      // update/ dlc/ subdirs left behind after their files moved out).
+      final remaining = srcDir.listSync(followLinks: false);
+      final onlyEmptyDirs = remaining.every((e) =>
+          e is Directory && e.listSync(followLinks: false).isEmpty);
+      if (remaining.isEmpty || onlyEmptyDirs) {
+        srcDir.deleteSync(recursive: true);
+      }
+    }
+    return moved;
+  }
 
   static String _ext(String path) {
     final i = path.lastIndexOf('.');

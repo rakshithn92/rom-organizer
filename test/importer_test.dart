@@ -201,5 +201,36 @@ void main() {
           .length;
       expect(folders, 1);
     });
+
+    test('mergeGames combines duplicate folders into the target', () async {
+      // Two duplicate folders: an English and a Japanese copy of the same game.
+      Directory('$root/My Game EN').createSync(recursive: true);
+      File('$root/My Game EN/Game.nsp').writeAsBytesSync([1, 2, 3]);
+      Directory('$root/My Game EN/update').createSync(recursive: true);
+      File('$root/My Game EN/update/Game.v1.6.0.nsp').writeAsBytesSync([4, 5, 6]);
+
+      // JP copy has a distinct update file (different name -> no collision).
+      Directory('$root/My Game JP').createSync(recursive: true);
+      Directory('$root/My Game JP/update').createSync(recursive: true);
+      File('$root/My Game JP/update/Game.v1.7.0.nsp').writeAsBytesSync([7, 8, 9]);
+
+      final moved = Importer(root).mergeGames(
+        '$root/My Game EN',
+        ['$root/My Game JP'],
+      );
+
+      expect(moved, 1); // the JP update file moved into EN's update/
+      expect(File('$root/My Game EN/Game.nsp').existsSync(), isTrue);
+      expect(
+        File('$root/My Game EN/update/Game.v1.6.0.nsp').existsSync(),
+        isTrue,
+      );
+      expect(
+        File('$root/My Game EN/update/Game.v1.7.0.nsp').existsSync(),
+        isTrue,
+      );
+      // The JP folder is gone (its only file moved out).
+      expect(Directory('$root/My Game JP').existsSync(), isFalse);
+    });
   });
 }
