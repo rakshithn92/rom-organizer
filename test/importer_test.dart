@@ -312,6 +312,28 @@ void main() {
       );
     });
 
+    test('folder names with a colon are sanitized (Android EPERM fix)', () async {
+      // A title with a colon must not create a folder containing ':'
+      // (Android dart:io fails with EPERM on such paths).
+      final base = '${tmp.path}/Game.nsp';
+      File(base).writeAsBytesSync([1, 2, 3]);
+      final result = await Importer(root)
+          .importFile(base, 'Dragon Quest XI S: Echoes of an Elusive Age');
+
+      expect(result.error, isNull);
+      // The folder name has the colon replaced, not kept.
+      expect(
+        Directory('$root/Dragon Quest XI S - Echoes of an Elusive Age')
+            .existsSync(),
+        isTrue,
+      );
+      expect(
+        Directory('$root/Dragon Quest XI S: Echoes of an Elusive Age')
+            .existsSync(),
+        isFalse,
+      );
+    });
+
     test('mergeGames combines duplicate folders into the target', () async {
       // Two duplicate folders: an English and a Japanese copy of the same game.
       Directory('$root/My Game EN').createSync(recursive: true);

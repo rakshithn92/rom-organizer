@@ -36,12 +36,21 @@ class Importer {
 
   Importer(this.libraryRoot);
 
+  /// Sanitizes a folder name for use as a filesystem path. Android's dart:io
+  /// fails with EPERM on file operations when a path contains a colon (or other
+  /// reserved chars), so replace them with a safe separator.
+  static String _sanitizeFolderName(String name) {
+    return name
+        .replaceAll(RegExp(r'[:/\\*?"<>|]'), ' - ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
   /// Resolves the game folder for [gameTitle]. If a folder with the same name
   /// already exists (case-insensitive), returns it so the import MERGES into
   /// the existing game instead of creating a duplicate folder. Otherwise
   /// returns the new path.
   String _resolveGameFolder(String gameTitle) {
-    final safeTitle = SafePaths.gameFolderName(gameTitle);
     final root = Directory(libraryRoot);
     if (root.existsSync()) {
       final dirs = root
@@ -49,15 +58,34 @@ class Importer {
           .whereType<Directory>()
           .toList();
 
-      // 1. Exact case-insensitive match.
+      // 1. Exact case-insensitive match (on sanitized names, so a folder
+      //    created with a colon still matches a title that has one).
+      final sanitizedTitle = _sanitizeFolderName(gameTitle).toLowerCase();
       for (final e in dirs) {
-        if (e.path.split('/').last.toLowerCase() == safeTitle.toLowerCase()) {
+        if (_sanitizeFolderName(e.path.split('/').last).toLowerCase() ==
+            sanitizedTitle) {
           return e.path;
         }
       }
 
+      // 2. Prefix fallback: an existing folder whose name is a prefix of the
+      //    resolved title (with a word boundary) is the same game. This lets
+      //    an update resolve to "Dragon Quest XI S: Echoes..." and still land
+      //    in the existing "Dragon Quest XI" folder.
+      // ponytail: heuristic ceiling — a short folder name that is a complete
+      // word prefix of a longer title (e.g. "Mario" matching "Mario Kart")
+      // will over-merge. Acceptable for a personal tool; the user can rename.
+      for (final e in dirs) {
+        final lowerName = _sanitizeFolderName(e.path.split('/').last).toLowerCase();
+        if (sanitizedTitle.startsWith(lowerName) &&
+            sanitizedTitle.length > lowerName.length &&
+            !RegExp(r'[a-z0-9]').hasMatch(
+                sanitizedTitle.substring(lowerName.length, lowerName.length + 1))) {
+          return e.path;
+        }
+      }
     }
-    return SafePaths.gameFolder(libraryRoot, safeTitle);
+    return p.join(libraryRoot, _sanitizeFolderName(gameTitle));
   }
 
   /// Imports [archivePath] into a new folder named [gameTitle] under
