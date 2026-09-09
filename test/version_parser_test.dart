@@ -13,6 +13,10 @@ void main() {
       expect(VersionParser.parse('Game[0100...][v5].nsp')?.toString(), '5.0.0');
     });
 
+    test('parses underscore-separated versions', () {
+      expect(VersionParser.parse('Game_v1.6.0.nsp')?.toString(), '1.6.0');
+    });
+
     test('returns null when no version present', () {
       expect(VersionParser.parse('Game.nsp'), isNull);
       expect(VersionParser.parse('The Legend of Zelda.nsp'), isNull);

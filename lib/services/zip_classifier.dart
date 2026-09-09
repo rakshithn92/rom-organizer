@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 
 /// Classification of a single entry inside a game zip.
-enum RomEntryKind { base, update, dlc, other }
+enum RomEntryKind { base, update, dlc }
 
 /// A classified entry inside a game archive.
 class ZipEntryInfo {

@@ -83,7 +83,37 @@ class _LibraryScreenState extends State<LibraryScreen> {
       }
       return;
     }
+
+    // Merging moves files out of the source folders and deletes them — a
+    // destructive action that must be confirmed.
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Merge folders?'),
+        content: Text(
+          'Move all files from ${sources.length} folder(s) into '
+          '"${p.basename(target.path)}"? The source folders will be removed.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Merge'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
     final moved = Importer(_libraryRoot).mergeGames(target.path, sources);
+    // Remove the cover cache keys for the merged-away source folders.
+    final db = TagDb();
+    for (final s in sources) {
+      await db.deleteSetting('cover:$s');
+    }
     setState(() {
       _mergeMode = false;
       _selected.clear();
@@ -96,18 +126,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
-  /// True if a game folder has no files anywhere (base, update/, dlc/).
+  /// True if a game folder has no files anywhere (base, update/, dlc/, or any
+  /// other subdirectory). A folder with ANY file in ANY subfolder is NOT empty
+  /// — otherwise cleanup could delete real ROMs in a non-standard subdir.
   bool _isEmptyFolder(Directory dir) {
     for (final e in dir.listSync(followLinks: false)) {
       if (e is File) return false;
       if (e is Directory) {
-        final sub = p.basename(e.path);
-        if (sub == 'update' || sub == 'dlc') {
-          if (e.listSync(followLinks: false).any((f) => f is File)) return false;
-        }
+        if (_dirHasAnyFile(e)) return false;
       }
     }
     return true;
+  }
+
+  bool _dirHasAnyFile(Directory dir) {
+    for (final e in dir.listSync(followLinks: false)) {
+      if (e is File) return true;
+      if (e is Directory && _dirHasAnyFile(e)) return true;
+    }
+    return false;
   }
 
   /// Deletes every game folder that contains no files (empty shells left over
@@ -150,6 +187,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     for (final d in empty) {
       try {
         d.deleteSync(recursive: true);
+        await TagDb().deleteSetting('cover:${d.path}');
       } catch (_) {
         // Skip folders that fail to delete.
       }
@@ -165,6 +203,29 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// Runs library maintenance: deletes old update files (keeping the latest
   /// version per game) and reports which games are missing an update.
   Future<void> _maintain() async {
+    // Deleting old update files is destructive — confirm first.
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete old updates?'),
+        content: const Text(
+          'For each game, keep only the latest update version and delete the '
+          'older ones to reclaim space?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
     final importer = Importer(_libraryRoot);
     var deleted = 0;
     for (final g in _games) {
@@ -366,7 +427,23 @@ class _GameCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: coverUrl != null
-                      ? Image.network(coverUrl!, fit: BoxFit.cover)
+                      ? Image.network(
+                          coverUrl!,
+                          fit: BoxFit.cover,
+                          loadingBuilder: (ctx, child, progress) =>
+                              progress == null
+                                  ? child
+                                  : const ColoredBox(
+                                      color: Colors.black26,
+                                      child: Center(
+                                          child: CircularProgressIndicator()),
+                                    ),
+                          errorBuilder: (ctx, error, stack) => const ColoredBox(
+                            color: Colors.black26,
+                            child: Center(
+                                child: Icon(Icons.videogame_asset, size: 40)),
+                          ),
+                        )
                       : const ColoredBox(
                           color: Colors.black26,
                           child: Center(
@@ -464,7 +541,7 @@ class _GameDetailState extends State<_GameDetail> {
       }
       if (cover != null) {
         await db.saveSetting('cover:$newPath', cover);
-        await db.saveSetting('cover:${game.path}', '');
+        await db.deleteSetting('cover:${game.path}');
       }
       if (!mounted) return;
       setState(() => game = Directory(newPath));
@@ -584,21 +661,20 @@ class _GameDetailState extends State<_GameDetail> {
                   const SizedBox(height: 16),
                   FilledButton.icon(
                     onPressed: () async {
+                      // Capture context-dependent objects before the await.
+                      final messenger = ScaffoldMessenger.of(context);
+                      final navigator = Navigator.of(context);
                       try {
                         game.deleteSync(recursive: true);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text('Empty folder removed.')),
-                          );
-                          Navigator.pop(context);
-                        }
+                        await TagDb().deleteSetting('cover:${game.path}');
+                        messenger.showSnackBar(
+                          const SnackBar(content: Text('Empty folder removed.')),
+                        );
+                        navigator.pop();
                       } catch (e) {
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Could not remove: $e')),
-                          );
-                        }
+                        messenger.showSnackBar(
+                          SnackBar(content: Text('Could not remove: $e')),
+                        );
                       }
                     },
                     icon: const Icon(Icons.cleaning_services),

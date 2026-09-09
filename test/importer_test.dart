@@ -195,6 +195,23 @@ void main() {
       expect(Directory('$root/My Game').existsSync(), isFalse);
     });
 
+    test('importFile refuses to overwrite an existing library file', () async {
+      // Base game exists with a file.
+      final base = '${tmp.path}/Game.nsp';
+      File(base).writeAsBytesSync([1, 2, 3]);
+      await Importer(root).importFile(base, 'My Game');
+
+      // Import another file with the same basename -> must refuse, not overwrite.
+      final dup = '${tmp.path}/Game.nsp';
+      File(dup).writeAsBytesSync([9, 9, 9]);
+      final result = await Importer(root).importFile(dup, 'My Game');
+
+      expect(result.error, isNotNull);
+      expect(result.error, contains('already exists'));
+      // The original file is intact.
+      expect(File('$root/My Game/Game.nsp').readAsBytesSync(), [1, 2, 3]);
+    });
+
     test('import merges into an existing game folder (case-insensitive)', () async {
       // First import creates the folder.
       final base = '${tmp.path}/Game.nsp';

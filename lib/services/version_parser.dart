@@ -8,7 +8,10 @@
 ///
 /// Returns null if no version is found.
 class VersionParser {
-  static final _vTag = RegExp(r'v(\d+(?:\.\d+)*)', caseSensitive: false);
+  // Match vX.Y.Z where the char before 'v' is a non-digit (space, dot,
+  // underscore, bracket, start-of-string). A plain \b fails when 'v' is
+  // preceded by '_' (a word char), e.g. Game_v1.6.0.nsp.
+  static final _vTag = RegExp(r'(?<![0-9])v(\d+(?:\.\d+)*)', caseSensitive: false);
   static final _bracketV = RegExp(r'\[v(\d+)\]', caseSensitive: false);
 
   /// Extracts the version as a comparable [Version] from [fileName].

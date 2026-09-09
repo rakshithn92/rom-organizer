@@ -5,7 +5,11 @@
 class TitleParser {
   static final _bracketTag = RegExp(r'\[[^\]]*\]');
   static final _parenTag = RegExp(r'\([^)]*\)');
-  static final _versionTag = RegExp(r'\bv\d+(\.\d+)*\b', caseSensitive: false);
+  // Match vX.Y.Z where the char before 'v' is a non-digit (space, dot,
+  // underscore, bracket, start-of-string). A plain \b fails when 'v' is
+  // preceded by '_' (a word char), e.g. Game_v1.6.0.nsp.
+  static final _versionTag =
+      RegExp(r'(?<![0-9])v\d+(\.\d+)*', caseSensitive: false);
   static final _updateWord = RegExp(r'\b(update|upd|patch|dlc|addon)\b',
       caseSensitive: false);
   static final _titleId = RegExp(r'0100[0-9A-Fa-f]{8,}');

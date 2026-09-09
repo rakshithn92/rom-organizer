@@ -15,6 +15,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final TagDb _db = TagDb();
   final _keyController = TextEditingController();
   bool _loaded = false;
+  bool _obscureKey = true;
 
   @override
   void initState() {
@@ -72,9 +73,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: _keyController,
-                  decoration: const InputDecoration(
+                  obscureText: _obscureKey,
+                  decoration: InputDecoration(
                     labelText: 'API key',
-                    border: OutlineInputBorder(),
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                          _obscureKey ? Icons.visibility : Icons.visibility_off),
+                      onPressed: () =>
+                          setState(() => _obscureKey = !_obscureKey),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 16),

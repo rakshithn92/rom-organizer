@@ -78,9 +78,21 @@ class _ImportScreenState extends State<ImportScreen> {
     _load();
   }
 
-  /// Recursively scans the current folder for Switch ROMs and archives and
-  /// imports each one, auto-titling from TheGamesDB. Skips files that fail
-  /// validation (e.g. a zip with no Switch ROM inside).
+  /// Resolves the real game title from TheGamesDB (if a key is set), falling
+  /// back to the parsed filename candidate.
+  Future<String> _resolveTitle(String candidate) async {
+    final key = await _db.getSetting('thegamesdb_api_key');
+    if (key != null && key.isNotEmpty) {
+      try {
+        final meta = await TheGamesDbClient(key).search(candidate);
+        if (meta != null && meta.title.isNotEmpty) return meta.title;
+      } catch (_) {
+        // Fall back to the parsed candidate.
+      }
+    }
+    return candidate;
+  }
+
   Future<void> _autoImport() async {
     final files = RomScanner().findImportables(_current);
     if (files.isEmpty) {
@@ -90,6 +102,37 @@ class _ImportScreenState extends State<ImportScreen> {
         );
       }
       return;
+    }
+
+    // Ask once up front whether to delete fully-extracted archives. This is a
+    // destructive action (deletes the user's original zips), so it must be
+    // confirmed — not done silently in a bulk loop.
+    final hasArchive = files.any((f) =>
+        kArchiveExtensions.contains(p.extension(f).toLowerCase()));
+    var deleteArchives = false;
+    if (hasArchive) {
+      deleteArchives = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Delete extracted archives?'),
+              content: const Text(
+                'After a zip/archive is fully extracted, delete it to reclaim '
+                'space? This removes the original archive files.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Keep'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Delete'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!mounted) return;
     }
 
     setState(() => _busy = true);
@@ -103,27 +146,15 @@ class _ImportScreenState extends State<ImportScreen> {
         continue;
       }
       final isArchive = kArchiveExtensions.contains(ext);
-      final candidate = TitleParser.clean(p.basename(path));
-
-      // Resolve the real title from TheGamesDB (if a key is set).
-      var title = candidate;
-      final key = await _db.getSetting('thegamesdb_api_key');
-      if (key != null && key.isNotEmpty) {
-        try {
-          final meta = await TheGamesDbClient(key).search(candidate);
-          if (meta != null && meta.title.isNotEmpty) title = meta.title;
-        } catch (_) {
-          // Fall back to the parsed candidate.
-        }
-      }
+      final title = await _resolveTitle(TitleParser.clean(p.basename(path)));
 
       final result = isArchive
           ? await importer.importArchive(path, title)
           : await importer.importFile(path, title);
       if (result.error == null) {
         imported++;
-        // If it was an archive and fully extracted, delete it to reclaim space.
-        if (isArchive && result.fullyExtracted) {
+        // Delete the archive only if the user chose to.
+        if (isArchive && result.fullyExtracted && deleteArchives) {
           try {
             File(path).deleteSync();
           } catch (_) {
@@ -174,20 +205,8 @@ class _ImportScreenState extends State<ImportScreen> {
 
     setState(() => _busy = true);
 
-    // 1. Candidate title from the filename.
-    final candidate = TitleParser.clean(p.basename(file.path));
-
-    // 2. Look up the real title from TheGamesDB (if a key is set).
-    var resolved = candidate;
-    final key = await _db.getSetting('thegamesdb_api_key');
-    if (key != null && key.isNotEmpty) {
-      try {
-        final meta = await TheGamesDbClient(key).search(candidate);
-        if (meta != null && meta.title.isNotEmpty) resolved = meta.title;
-      } catch (_) {
-        // Network/API failure — fall back to the parsed candidate.
-      }
-    }
+    // 1. Candidate title from the filename, resolved via TheGamesDB.
+    final resolved = await _resolveTitle(TitleParser.clean(p.basename(file.path)));
 
     setState(() => _busy = false);
     if (!mounted) return;

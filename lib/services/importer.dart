@@ -118,6 +118,12 @@ class Importer {
         };
         Directory(destDir).createSync(recursive: true);
         final dest = p.join(destDir, p.basename(f.name));
+        // Never overwrite an existing file — a duplicate basename (e.g. two
+        // entries in different subfolders both named update.nsp) would
+        // otherwise silently destroy the first one.
+        if (File(dest).existsSync()) {
+          continue;
+        }
         File(dest).writeAsBytesSync(f.content);
         switch (kind) {
           case RomEntryKind.update:
@@ -171,6 +177,16 @@ class Importer {
       };
       Directory(destDir).createSync(recursive: true);
       final dest = p.join(destDir, p.basename(filePath));
+      // Never overwrite an existing file — a loose ROM whose basename already
+      // exists in the library (e.g. two regions both named Game.nsp) would
+      // otherwise silently destroy the previous one.
+      if (File(dest).existsSync()) {
+        return _err(
+          gameFolder,
+          'A file named "${p.basename(filePath)}" already exists in this '
+          'game. Rename it or remove the existing file first.',
+        );
+      }
       _moveFile(filePath, dest);
       return ImportResult(
         gameFolder: gameFolder,
@@ -280,8 +296,13 @@ class Importer {
     for (final f in updates) {
       final v = VersionParser.parse(p.basename(f.path));
       if (v == null) continue; // never touch unparseable files
-      final base = p.basenameWithoutExtension(f.path)
+      // Normalize the base name: strip the version, then any trailing
+      // separator (dot/underscore/space) so "Game.Update.v1.6.0" and
+      // "Game.v1.6.0" group together.
+      final base = p
+          .basenameWithoutExtension(f.path)
           .replaceAll(RegExp(r'v\d+(\.\d+)*', caseSensitive: false), '')
+          .replaceAll(RegExp(r'[._\s]+$'), '')
           .trim();
       byBase.putIfAbsent(base, () => []).add(f);
     }

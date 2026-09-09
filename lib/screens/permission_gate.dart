@@ -17,6 +17,7 @@ class PermissionGate extends StatefulWidget {
 class _PermissionGateState extends State<PermissionGate> {
   bool _granted = false;
   bool _checking = true;
+  bool _denied = false;
 
   @override
   void initState() {
@@ -32,7 +33,10 @@ class _PermissionGateState extends State<PermissionGate> {
         _checking = false;
       });
     } else {
-      setState(() => _checking = false);
+      setState(() {
+        _denied = status.isPermanentlyDenied;
+        _checking = false;
+      });
     }
   }
 
@@ -41,8 +45,14 @@ class _PermissionGateState extends State<PermissionGate> {
     final status = await Permission.manageExternalStorage.request();
     setState(() {
       _granted = status.isGranted;
+      _denied = status.isPermanentlyDenied;
       _checking = false;
     });
+  }
+
+  Future<void> _openSettings() async {
+    await openAppSettings();
+    _check();
   }
 
   @override
@@ -71,7 +81,19 @@ class _PermissionGateState extends State<PermissionGate> {
               const SizedBox(height: 24),
               if (_checking)
                 const CircularProgressIndicator()
-              else
+              else if (_denied) ...[
+                const Text(
+                  'Access was denied. Enable "All files access" for ROM '
+                  'Organizer in Settings to continue.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: _openSettings,
+                  icon: const Icon(Icons.settings),
+                  label: const Text('Open settings'),
+                ),
+              ] else
                 FilledButton.icon(
                   onPressed: _request,
                   icon: const Icon(Icons.check),
