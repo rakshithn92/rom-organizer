@@ -69,5 +69,7 @@
         <package android:name="emu.skyline.online" />
         <package android:name="org.strato.skyline" />
         <package android:name="com.kaihei.egg" />
+        <package android:name="dev.eden.eden_emulator" />
+        <package android:name="dev.legacy.eden_emulator" />
     </queries>
 </manifest>

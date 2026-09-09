@@ -22,6 +22,8 @@ class MainActivity : FlutterActivity() {
         "emu.skyline.online" to "Skyline",
         "org.strato.skyline" to "Strato",
         "com.kaihei.egg" to "Egg NS",
+        "dev.eden.eden_emulator" to "Eden",
+        "dev.legacy.eden_emulator" to "Eden Legacy",
     )
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
