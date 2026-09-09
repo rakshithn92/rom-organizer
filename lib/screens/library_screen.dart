@@ -487,9 +487,49 @@ class _GameDetailState extends State<_GameDetail> {
               ),
           ],
           if (files.isEmpty && updateFiles.isEmpty && dlcFiles.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(32),
-              child: Center(child: Text('Empty game folder')),
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  const Icon(Icons.folder_off, size: 48, color: Colors.grey),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'This folder has no game files.',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'It\'s an empty shell — likely left over when a game\'s '
+                    'base and update were split into differently-titled '
+                    'folders. Your ROM files are safe in another folder.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: () async {
+                      try {
+                        game.deleteSync(recursive: true);
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                content: Text('Empty folder removed.')),
+                          );
+                          Navigator.pop(context);
+                        }
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Could not remove: $e')),
+                          );
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.cleaning_services),
+                    label: const Text('Remove this empty folder'),
+                  ),
+                ],
+              ),
             ),
         ],
       ),
