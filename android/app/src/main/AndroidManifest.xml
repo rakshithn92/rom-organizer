@@ -70,6 +70,8 @@
         <package android:name="org.strato.skyline" />
         <package android:name="com.kaihei.egg" />
         <package android:name="dev.eden.eden_emulator" />
+        <package android:name="dev.eden.eden_emulator.nightly" />
         <package android:name="dev.legacy.eden_emulator" />
+        <package android:name="dev.legacy.eden_emulator.nightly" />
     </queries>
 </manifest>
