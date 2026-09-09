@@ -282,9 +282,68 @@ class _GameCard extends StatelessWidget {
   }
 }
 
-class _GameDetail extends StatelessWidget {
+class _GameDetail extends StatefulWidget {
   final Directory game;
   const _GameDetail({required this.game});
+
+  @override
+  State<_GameDetail> createState() => _GameDetailState();
+}
+
+class _GameDetailState extends State<_GameDetail> {
+  late Directory game = widget.game;
+
+  /// Renames the game folder (and its cover cache key) to a corrected title.
+  Future<void> _rename() async {
+    final controller = TextEditingController(text: p.basename(game.path));
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename game'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Game title'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+    if (newName == null || newName.isEmpty || newName == p.basename(game.path)) {
+      return;
+    }
+
+    final newPath = p.join(p.dirname(game.path), newName);
+    try {
+      // Move the cover cache key along with the folder.
+      final db = TagDb();
+      final cover = await db.getSetting('cover:${game.path}');
+      game.renameSync(newPath);
+      if (cover != null) {
+        await db.saveSetting('cover:$newPath', cover);
+        await db.saveSetting('cover:${game.path}', '');
+      }
+      if (!mounted) return;
+      setState(() => game = Directory(newPath));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Game renamed.')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Rename failed: $e')),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -308,7 +367,16 @@ class _GameDetail extends StatelessWidget {
     }
 
     return Scaffold(
-      appBar: AppBar(title: Text(p.basename(game.path))),
+      appBar: AppBar(
+        title: Text(p.basename(game.path)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.edit),
+            tooltip: 'Rename game',
+            onPressed: _rename,
+          ),
+        ],
+      ),
       body: ListView(
         children: [
           if (files.isNotEmpty) ...[
