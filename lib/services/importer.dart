@@ -56,9 +56,32 @@ class Importer {
   String _resolveGameFolder(String gameTitle) {
     final root = Directory(libraryRoot);
     if (root.existsSync()) {
-      for (final e in root.listSync(followLinks: false)) {
-        if (e is Directory &&
-            e.path.split('/').last.toLowerCase() == gameTitle.toLowerCase()) {
+      final dirs = root
+          .listSync(followLinks: false)
+          .whereType<Directory>()
+          .toList();
+
+      // 1. Exact case-insensitive match.
+      for (final e in dirs) {
+        if (e.path.split('/').last.toLowerCase() == gameTitle.toLowerCase()) {
+          return e.path;
+        }
+      }
+
+      // 2. Prefix fallback: an existing folder whose name is a prefix of the
+      //    resolved title (with a word boundary) is the same game. This lets
+      //    an update resolve to "Dragon Quest XI S: Echoes..." and still land
+      //    in the existing "Dragon Quest XI" folder.
+      // ponytail: heuristic ceiling — a short folder name that is a complete
+      // word prefix of a longer title (e.g. "Mario" matching "Mario Kart")
+      // will over-merge. Acceptable for a personal tool; the user can rename.
+      final lowerTitle = gameTitle.toLowerCase();
+      for (final e in dirs) {
+        final lowerName = e.path.split('/').last.toLowerCase();
+        if (lowerTitle.startsWith(lowerName) &&
+            lowerTitle.length > lowerName.length &&
+            !RegExp(r'[a-z0-9]').hasMatch(
+                lowerTitle.substring(lowerName.length, lowerName.length + 1))) {
           return e.path;
         }
       }

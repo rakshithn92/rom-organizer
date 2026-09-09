@@ -238,6 +238,33 @@ void main() {
       expect(folders, 1);
     });
 
+    test('update merges into a base folder via prefix match (Dragon Quest case)',
+        () async {
+      // Base folder is the short title.
+      final base = '${tmp.path}/Dragon Quest XI.nsp';
+      File(base).writeAsBytesSync([1, 2, 3]);
+      await Importer(root).importFile(base, 'Dragon Quest XI');
+
+      // Update resolves to the full official title (TheGamesDB style).
+      final upd = '${tmp.path}/Dragon Quest XI Update v1.6.0.nsp';
+      File(upd).writeAsBytesSync([4, 5, 6]);
+      final result = await Importer(root).importFile(
+          upd, 'Dragon Quest XI S: Echoes of an Elusive Age - Definitive Edition');
+
+      expect(result.error, isNull);
+      expect(
+        File('$root/Dragon Quest XI/update/Dragon Quest XI Update v1.6.0.nsp')
+            .existsSync(),
+        isTrue,
+      );
+      // Only ONE game folder exists.
+      final folders = Directory(root)
+          .listSync(followLinks: false)
+          .whereType<Directory>()
+          .length;
+      expect(folders, 1);
+    });
+
     test('mergeGames combines duplicate folders into the target', () async {
       // Two duplicate folders: an English and a Japanese copy of the same game.
       Directory('$root/My Game EN').createSync(recursive: true);
