@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'screens/browser_screen.dart';
+import 'screens/home_screen.dart';
 import 'screens/permission_gate.dart';
 
 void main() {
@@ -18,7 +18,7 @@ class RomOrganizerApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const PermissionGate(child: BrowserScreen()),
+      home: const PermissionGate(child: HomeScreen()),
     );
   }
 }
