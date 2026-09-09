@@ -32,6 +32,9 @@ separated, and reclaim space by deleting fully-extracted zips.
 - **Library view** — grid of your games with cover art (fetched from
   TheGamesDB and cached locally), an "has update" badge, and a detail view
   listing base + update files.
+- **Emulator integration** — open a game directly in an installed Switch
+  emulator (Yuzu, Sudachi, etc.) with the play button on the game's detail
+  screen. Android shows an "open with" chooser listing your emulators.
 - **Recognized formats** — `.nsp`, `.xci`, `.nsz`, `.xcz`, `.nca`.
 
 > **Note on archives:** supported archive formats are `.zip`, `.tar`, `.gz`,

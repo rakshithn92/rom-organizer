@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import '../services/emulator_launcher.dart';
 import '../services/importer.dart';
 import '../services/tag_db.dart';
 import '../services/thegamesdb_client.dart';
@@ -473,6 +474,37 @@ class _GameDetailState extends State<_GameDetail> {
     }
   }
 
+  /// Launches the game's base ROM in an installed emulator.
+  Future<void> _launch() async {
+    // Find the first base ROM file in the game folder.
+    File? rom;
+    for (final e in game.listSync(followLinks: false)) {
+      if (e is File) {
+        rom = e;
+        break;
+      }
+    }
+    if (rom == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No base ROM file to launch.')),
+        );
+      }
+      return;
+    }
+    final ok = await EmulatorLauncher.launch(rom.path);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not launch. Install a Switch emulator (e.g. Yuzu, Sudachi) '
+            'and try again.',
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final files = <File>[];
@@ -498,6 +530,11 @@ class _GameDetailState extends State<_GameDetail> {
       appBar: AppBar(
         title: Text(p.basename(game.path)),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.play_circle),
+            tooltip: 'Open in emulator',
+            onPressed: _launch,
+          ),
           IconButton(
             icon: const Icon(Icons.edit),
             tooltip: 'Rename game',
