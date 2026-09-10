@@ -46,11 +46,17 @@ class Importer {
         .trim();
   }
 
-  /// Resolves the game folder for [gameTitle]. If a folder with the same name
-  /// already exists (case-insensitive), returns it so the import MERGES into
-  /// the existing game instead of creating a duplicate folder. Otherwise
-  /// returns the new path.
+  /// Resolves the game folder for [gameTitle]. Validates the title via
+  /// [SafePaths] (rejects slashes/control chars), then sanitizes reserved
+  /// filesystem chars (colons etc.) for the actual folder name. If a folder
+  /// with the same sanitized name already exists (case-insensitive), returns
+  /// it so the import MERGES into the existing game instead of creating a
+  /// duplicate folder. Otherwise returns the new path.
   String _resolveGameFolder(String gameTitle) {
+    // Validate (throws on slashes/control chars) — keeps the title from
+    // escaping the library root.
+    SafePaths.gameFolderName(gameTitle);
+    final safeTitle = _sanitizeFolderName(gameTitle);
     final root = Directory(libraryRoot);
     if (root.existsSync()) {
       final dirs = root
@@ -58,34 +64,17 @@ class Importer {
           .whereType<Directory>()
           .toList();
 
-      // 1. Exact case-insensitive match (on sanitized names, so a folder
-      //    created with a colon still matches a title that has one).
-      final sanitizedTitle = _sanitizeFolderName(gameTitle).toLowerCase();
+      // Exact case-insensitive match (on sanitized names, so a folder
+      // created with a colon still matches a title that has one).
+      final sanitizedTitle = safeTitle.toLowerCase();
       for (final e in dirs) {
         if (_sanitizeFolderName(e.path.split('/').last).toLowerCase() ==
             sanitizedTitle) {
           return e.path;
         }
       }
-
-      // 2. Prefix fallback: an existing folder whose name is a prefix of the
-      //    resolved title (with a word boundary) is the same game. This lets
-      //    an update resolve to "Dragon Quest XI S: Echoes..." and still land
-      //    in the existing "Dragon Quest XI" folder.
-      // ponytail: heuristic ceiling — a short folder name that is a complete
-      // word prefix of a longer title (e.g. "Mario" matching "Mario Kart")
-      // will over-merge. Acceptable for a personal tool; the user can rename.
-      for (final e in dirs) {
-        final lowerName = _sanitizeFolderName(e.path.split('/').last).toLowerCase();
-        if (sanitizedTitle.startsWith(lowerName) &&
-            sanitizedTitle.length > lowerName.length &&
-            !RegExp(r'[a-z0-9]').hasMatch(
-                sanitizedTitle.substring(lowerName.length, lowerName.length + 1))) {
-          return e.path;
-        }
-      }
     }
-    return p.join(libraryRoot, _sanitizeFolderName(gameTitle));
+    return p.join(libraryRoot, safeTitle);
   }
 
   /// Imports [archivePath] into a new folder named [gameTitle] under
