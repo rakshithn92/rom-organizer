@@ -142,57 +142,59 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   Future<void> _autoImport() async {
-    final currentPath = _current.path;
-    final files = await Isolate.run(
-      () => RomScanner().findImportables(
-        Directory(currentPath),
-        excludedRoots: const {AppPaths.libraryRoot},
-      ),
-    );
-    if (files.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No Switch ROMs or archives found here.')),
-        );
-      }
-      return;
-    }
-
-    // Ask once up front whether to delete fully-extracted archives. This is a
-    // destructive action (deletes the user's original zips), so it must be
-    // confirmed — not done silently in a bulk loop.
-    final hasArchive = files.any((f) =>
-        SupportedFormats.archives.contains(p.extension(f).toLowerCase()));
-    var deleteArchives = false;
-    if (hasArchive) {
-      deleteArchives = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('Delete extracted archives?'),
-              content: const Text(
-                'After a zip/archive is fully extracted, delete it to reclaim '
-                'space? This removes the original archive files.',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('Keep'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  child: const Text('Delete'),
-                ),
-              ],
-            ),
-          ) ??
-          false;
-      if (!mounted) return;
-    }
-
+    // Show the spinner immediately — the scan below can take seconds on a
+    // large folder, and without this the button looks dead during it.
     setState(() => _busy = true);
-    final importer = Importer(AppPaths.libraryRoot);
     var imported = 0, skipped = 0, warnings = 0;
     try {
+      final currentPath = _current.path;
+      final files = await Isolate.run(
+        () => RomScanner().findImportables(
+          Directory(currentPath),
+          excludedRoots: const {AppPaths.libraryRoot},
+        ),
+      );
+      if (files.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No Switch ROMs or archives found here.')),
+          );
+        }
+        return;
+      }
+
+      // Ask once up front whether to delete fully-extracted archives. This is a
+      // destructive action (deletes the user's original zips), so it must be
+      // confirmed — not done silently in a bulk loop.
+      final hasArchive = files.any((f) =>
+          SupportedFormats.archives.contains(p.extension(f).toLowerCase()));
+      var deleteArchives = false;
+      if (hasArchive) {
+        deleteArchives = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('Delete extracted archives?'),
+                content: const Text(
+                  'After a zip/archive is fully extracted, delete it to reclaim '
+                  'space? This removes the original archive files.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('Keep'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('Delete'),
+                  ),
+                ],
+              ),
+            ) ??
+            false;
+        if (!mounted) return;
+      }
+
+      final importer = Importer(AppPaths.libraryRoot);
       for (final path in files) {
         final ext = p.extension(path).toLowerCase();
         // 7z/rar can't be decoded in-app — skip them (user extracts via built-in).
