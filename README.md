@@ -11,7 +11,9 @@ separated, and reclaim space by deleting fully-extracted zips.
   title from TheGamesDB (editable), and organize it into a per-game folder.
   The import view starts in `Download/` by default.
 - **Auto-import** — tap the ✨ button to recursively scan the current folder
-  and import every Switch ROM and archive it finds, auto-titling each one.
+  and import every Switch ROM and archive it finds, auto-titling each one. The
+  organized library itself is excluded from scans so files already imported are
+  not re-imported.
 - **Switch-ROM validation** — before extracting an archive, the app checks its
   contents actually contain Switch ROM files (`.nsp`/`.xci`/`.nsz`/`.xcz`/
   `.nca`). If not, it tells you to provide a Switch ROM archive only — nothing
@@ -73,8 +75,30 @@ flutter build apk --release
 - **Title parsing** — region tags (`[USA]`), version tags (`v1.6.0`), and
   title-IDs (`0100...`) are stripped from filenames to build a clean search
   query.
+- **Update matching** — update title IDs are normalized to their base-game IDs.
+  Existing base filenames are inspected as a fallback for libraries created by
+  older app versions, and the discovered relationship is cached in SQLite. If
+  a loose update has no usable ID, manual import asks which existing game it
+  belongs to instead of guessing from a potentially ambiguous title prefix.
 - **Metadata** — TheGamesDB `ByGameName` is queried for the Switch platform;
   the resolved title and boxart are used for the folder name and cover.
+- **Filesystem safety** — game titles are validated as a single folder name,
+  imports never overwrite an existing ROM, and move errors retain the completed
+  copy when the source cannot be removed.
+- **Responsive maintenance** — recursive scans, ROM imports, archive decoding,
+  merges, renames, and update cleanup run outside Flutter's UI isolate.
+
+## Project structure
+
+The Dart code is split by responsibility so storage or matching bugs can be
+fixed without changing unrelated UI code:
+
+- `lib/config/` — shared storage paths and supported file formats.
+- `lib/models/` — data returned between scanners, importers, and screens.
+- `lib/services/` — parsing, matching, metadata, persistence, and filesystem
+  operations.
+- `lib/screens/` — Flutter presentation and user-flow orchestration.
+- `test/` — unit and widget regression coverage.
 
 ## Privacy
 

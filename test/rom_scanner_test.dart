@@ -79,4 +79,46 @@ void main() {
     expect(found.any((f) => f.endsWith('game.zip')), isTrue);
     expect(found.any((f) => f.endsWith('nested.xci')), isTrue);
   });
+
+  test('findImportables skips excluded library roots', () {
+    write('download.nsp');
+    final library = Directory('${tmp.path}/Switch')..createSync();
+    File('${library.path}/organized.nsp').writeAsBytesSync([1]);
+
+    final found = RomScanner().findImportables(
+      tmp,
+      excludedRoots: {library.path},
+    );
+
+    expect(found.any((f) => f.endsWith('download.nsp')), isTrue);
+    expect(found.any((f) => f.endsWith('organized.nsp')), isFalse);
+  });
+
+  test('finds an existing base folder from an update title ID', () {
+    final library = Directory('${tmp.path}/Switch')..createSync();
+    final game = Directory('${library.path}/My Game')..createSync();
+    File('${game.path}/My Game [0100C1B00A3A8000].nsp')
+        .writeAsBytesSync([1]);
+
+    final found = RomScanner().findGameFolderByTitleId(
+      library,
+      '0100C1B00A3A8800',
+    );
+
+    expect(found, game.path);
+  });
+
+  test('does not treat an update misplaced at the root as a base game', () {
+    final library = Directory('${tmp.path}/Switch')..createSync();
+    final orphan = Directory('${library.path}/Orphan Update')..createSync();
+    File('${orphan.path}/Update [0100C1B00A3A8800][v65536].nsp')
+        .writeAsBytesSync([1]);
+
+    final found = RomScanner().findGameFolderByTitleId(
+      library,
+      '0100C1B00A3A8800',
+    );
+
+    expect(found, isNull);
+  });
 }

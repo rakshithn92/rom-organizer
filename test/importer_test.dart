@@ -40,6 +40,14 @@ void main() {
       expect(byName['Game.v1.6.0.nsp'], RomEntryKind.update);
     });
 
+    test('classifies an update title ID with an integer version as update', () {
+      final entries = ZipClassifier.classify(makeZip({
+        'Game [0100C1B00A3A8800][v65536].nsp': 'x',
+      }))!;
+
+      expect(entries.single.kind, RomEntryKind.update);
+    });
+
     test('returns null for invalid zip bytes', () {
       expect(ZipClassifier.classify(Uint8List.fromList([1, 2, 3])), isNull);
     });
@@ -103,6 +111,19 @@ void main() {
       );
     });
 
+    test('reports the base title ID discovered inside an archive', () async {
+      final zipPath = '${tmp.path}/game-with-id.zip';
+      File(zipPath).writeAsBytesSync(makeZip({
+        'Game [0100C1B00A3A8000].nsp': 'base',
+      }));
+
+      final result =
+          await Importer(root).importArchive(zipPath, 'Game With ID');
+
+      expect(result.error, isNull);
+      expect(result.titleId, '0100C1B00A3A8000');
+    });
+
     test('rejects an archive with no Switch ROM files', () async {
       final zipPath = '${tmp.path}/notarom.zip';
       File(zipPath).writeAsBytesSync(makeZip({
@@ -115,6 +136,17 @@ void main() {
       expect(result.error, contains('Switch ROM'));
       // Nothing should have been extracted.
       expect(Directory('$root/My Game').existsSync(), isFalse);
+    });
+
+    test('rejects a game title that could escape the library root', () async {
+      final filePath = '${tmp.path}/game.nsp';
+      File(filePath).writeAsBytesSync([1]);
+
+      final result = await Importer(root).importFile(filePath, '../outside');
+
+      expect(result.error, contains('cannot contain slashes'));
+      expect(File(filePath).existsSync(), isTrue);
+      expect(Directory('${tmp.path}/outside').existsSync(), isFalse);
     });
 
     test('extracts a tar archive', () async {
@@ -238,7 +270,7 @@ void main() {
       expect(folders, 1);
     });
 
-    test('update merges into a base folder via prefix match (Dragon Quest case)',
+    test('does not guess an update target from an ambiguous title prefix',
         () async {
       // Base folder is the short title.
       final base = '${tmp.path}/Dragon Quest XI.nsp';
@@ -251,13 +283,8 @@ void main() {
       final result = await Importer(root).importFile(
           upd, 'Dragon Quest XI S: Echoes of an Elusive Age - Definitive Edition');
 
-      expect(result.error, isNull);
-      expect(
-        File('$root/Dragon Quest XI/update/Dragon Quest XI Update v1.6.0.nsp')
-            .existsSync(),
-        isTrue,
-      );
-      // Only ONE game folder exists.
+      expect(result.error, contains('No base game found'));
+      expect(File(upd).existsSync(), isTrue);
       final folders = Directory(root)
           .listSync(followLinks: false)
           .whereType<Directory>()

@@ -1,37 +1,24 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:archive/archive.dart';
 import 'package:path/path.dart' as p;
 
-import 'rom_scanner.dart';
+import '../config/supported_formats.dart';
+import '../models/import_result.dart';
+import 'file_mover.dart';
+import 'safe_paths.dart';
+import 'title_parser.dart';
 import 'version_parser.dart';
 import 'zip_classifier.dart';
 
-/// Result of importing one archive.
-class ImportResult {
-  final String gameFolder; // absolute path of the created game folder
-  final int baseFiles;
-  final int updateFiles;
-  final int dlcFiles;
-  final bool fullyExtracted; // every archive entry now exists on disk
-  final String? error;
-  const ImportResult({
-    required this.gameFolder,
-    required this.baseFiles,
-    required this.updateFiles,
-    required this.dlcFiles,
-    required this.fullyExtracted,
-    this.error,
-  });
-}
+export '../models/import_result.dart';
 
 /// Archive formats we can decode (via the `archive` package).
 /// NOTE: 7z and rar are NOT decodable in-app — the `archive` package has no
 /// decoders for them. They're still listed so the app can SEE those files and
 /// guide the user to extract them with Android's built-in extractor.
-const Set<String> kArchiveExtensions = {
-  '.zip', '.tar', '.gz', '.tgz', '.bz2', '.tbz2', '.xz', '.txz', '.7z', '.rar',
-};
+const Set<String> kArchiveExtensions = SupportedFormats.archives;
 
 /// Extracts a game archive into the organized library layout:
 ///
@@ -54,6 +41,7 @@ class Importer {
   /// the existing game instead of creating a duplicate folder. Otherwise
   /// returns the new path.
   String _resolveGameFolder(String gameTitle) {
+    final safeTitle = SafePaths.gameFolderName(gameTitle);
     final root = Directory(libraryRoot);
     if (root.existsSync()) {
       final dirs = root
@@ -63,30 +51,13 @@ class Importer {
 
       // 1. Exact case-insensitive match.
       for (final e in dirs) {
-        if (e.path.split('/').last.toLowerCase() == gameTitle.toLowerCase()) {
+        if (e.path.split('/').last.toLowerCase() == safeTitle.toLowerCase()) {
           return e.path;
         }
       }
 
-      // 2. Prefix fallback: an existing folder whose name is a prefix of the
-      //    resolved title (with a word boundary) is the same game. This lets
-      //    an update resolve to "Dragon Quest XI S: Echoes..." and still land
-      //    in the existing "Dragon Quest XI" folder.
-      // ponytail: heuristic ceiling — a short folder name that is a complete
-      // word prefix of a longer title (e.g. "Mario" matching "Mario Kart")
-      // will over-merge. Acceptable for a personal tool; the user can rename.
-      final lowerTitle = gameTitle.toLowerCase();
-      for (final e in dirs) {
-        final lowerName = e.path.split('/').last.toLowerCase();
-        if (lowerTitle.startsWith(lowerName) &&
-            lowerTitle.length > lowerName.length &&
-            !RegExp(r'[a-z0-9]').hasMatch(
-                lowerTitle.substring(lowerName.length, lowerName.length + 1))) {
-          return e.path;
-        }
-      }
     }
-    return p.join(libraryRoot, gameTitle);
+    return SafePaths.gameFolder(libraryRoot, safeTitle);
   }
 
   /// Imports [archivePath] into a new folder named [gameTitle] under
@@ -96,10 +67,22 @@ class Importer {
     String archivePath,
     String gameTitle, {
     String? targetFolder,
-  }) async {
-    final gameFolder = targetFolder ?? _resolveGameFolder(gameTitle);
+  }) =>
+      Isolate.run(
+        () => _importArchiveSync(archivePath, gameTitle, targetFolder),
+      );
+
+  ImportResult _importArchiveSync(
+    String archivePath,
+    String gameTitle,
+    String? targetFolder,
+  ) {
+    late final String gameFolder;
     try {
-      final bytes = await File(archivePath).readAsBytes();
+      gameFolder = targetFolder == null
+          ? _resolveGameFolder(gameTitle)
+          : SafePaths.existingGameFolder(libraryRoot, targetFolder);
+      final bytes = File(archivePath).readAsBytesSync();
       final archive = _decode(archivePath, bytes);
       if (archive == null) {
         return _err(gameFolder, 'Not a valid archive (unsupported or corrupt).');
@@ -109,8 +92,13 @@ class Importer {
       }
 
       // Validate: does the archive actually contain Switch ROM files?
-      final romEntries = archive.files.where((f) =>
-          f.isFile && kSwitchRomExtensions.contains(_ext(f.name))).toList();
+      final romEntries = archive.files
+          .where(
+            (f) =>
+                f.isFile &&
+                SupportedFormats.switchRoms.contains(_ext(f.name)),
+          )
+          .toList();
       if (romEntries.isEmpty) {
         return _err(
           gameFolder,
@@ -132,12 +120,19 @@ class Importer {
       }
 
       Directory(gameFolder).createSync(recursive: true);
+      String? titleId;
       final updateDir = p.join(gameFolder, 'update');
       final dlcDir = p.join(gameFolder, 'dlc');
 
       var base = 0, upd = 0, dlc = 0;
       for (final f in romEntries) {
         final kind = ZipClassifier.classifyPath(f.name);
+        if (kind == RomEntryKind.base) {
+          final entryId = TitleParser.titleId(f.name);
+          if (entryId != null) {
+            titleId = TitleParser.canonicalBaseTitleId(entryId);
+          }
+        }
         final destDir = switch (kind) {
           RomEntryKind.update => updateDir,
           RomEntryKind.dlc => dlcDir,
@@ -169,9 +164,13 @@ class Importer {
         updateFiles: upd,
         dlcFiles: dlc,
         fullyExtracted: fully,
+        titleId: titleId,
       );
     } catch (e) {
-      return _err(gameFolder, e.toString());
+      return _err(
+        targetFolder ?? libraryRoot,
+        _friendlyFileError(e),
+      );
     }
   }
 
@@ -187,9 +186,23 @@ class Importer {
     String filePath,
     String gameTitle, {
     String? targetFolder,
-  }) async {
+  }) =>
+      Isolate.run(() => _importFileSync(filePath, gameTitle, targetFolder));
+
+  ImportResult _importFileSync(
+    String filePath,
+    String gameTitle,
+    String? targetFolder,
+  ) {
     final kind = ZipClassifier.classifyPath(p.basename(filePath));
-    final gameFolder = targetFolder ?? _resolveGameFolder(gameTitle);
+    late final String gameFolder;
+    try {
+      gameFolder = targetFolder == null
+          ? _resolveGameFolder(gameTitle)
+          : SafePaths.existingGameFolder(libraryRoot, targetFolder);
+    } catch (e) {
+      return _err(targetFolder ?? libraryRoot, _friendlyFileError(e));
+    }
 
     // Update/DLC without an existing base-game folder -> refuse, don't create.
     if (kind != RomEntryKind.base && !Directory(gameFolder).existsSync()) {
@@ -218,28 +231,24 @@ class Importer {
           'game. Rename it or remove the existing file first.',
         );
       }
-      _moveFile(filePath, dest);
+      final sourceRemoved = FileMover.moveFile(filePath, dest);
       return ImportResult(
         gameFolder: gameFolder,
         baseFiles: kind == RomEntryKind.base ? 1 : 0,
         updateFiles: kind == RomEntryKind.update ? 1 : 0,
         dlcFiles: kind == RomEntryKind.dlc ? 1 : 0,
         fullyExtracted: true,
+        titleId: kind == RomEntryKind.base
+            ? TitleParser.titleId(p.basename(filePath))
+            : null,
+        warning: sourceRemoved
+            ? null
+            : 'The ROM was copied into the library, but Android would not '
+                'remove the original file. You can delete the original '
+                'manually after checking the library copy.',
       );
     } catch (e) {
-      return _err(gameFolder, e.toString());
-    }
-  }
-
-  /// Moves [src] to [dest], falling back to copy+delete when a direct rename
-  /// fails. Android can throw "Operation not permitted" (EPERM) on some paths
-  /// even with all-files access, so rename alone is not reliable.
-  void _moveFile(String src, String dest) {
-    try {
-      File(src).renameSync(dest);
-    } catch (_) {
-      File(src).copySync(dest);
-      File(src).deleteSync();
+      return _err(gameFolder, _friendlyFileError(e));
     }
   }
 
@@ -287,17 +296,24 @@ class Importer {
   /// Re-checks whether every ROM entry of the archive at [archivePath] is
   /// present under [gameFolder] (without re-extracting). Used to decide if the
   /// archive can be deleted after a partial extraction.
-  Future<bool> verifyExtracted(String archivePath, String gameFolder) async {
-    try {
-      final bytes = await File(archivePath).readAsBytes();
-      final archive = _decode(archivePath, bytes);
-      if (archive == null || archive.isEmpty) return false;
-      final romEntries = archive.files.where((f) =>
-          f.isFile && kSwitchRomExtensions.contains(_ext(f.name))).toList();
-      return _verify(romEntries, gameFolder);
-    } catch (_) {
-      return false;
-    }
+  Future<bool> verifyExtracted(String archivePath, String gameFolder) {
+    return Isolate.run(() {
+      try {
+        final bytes = File(archivePath).readAsBytesSync();
+        final archive = _decode(archivePath, bytes);
+        if (archive == null || archive.isEmpty) return false;
+        final romEntries = archive.files
+            .where(
+              (f) =>
+                  f.isFile &&
+                  SupportedFormats.switchRoms.contains(_ext(f.name)),
+            )
+            .toList();
+        return _verify(romEntries, gameFolder);
+      } catch (_) {
+        return false;
+      }
+    });
   }
 
   ImportResult _err(String gameFolder, String message) => ImportResult(
@@ -387,7 +403,7 @@ class Importer {
         if (e is File) {
           final dest = p.join(targetFolder, p.basename(e.path));
           if (!File(dest).existsSync()) {
-            _moveFile(e.path, dest);
+            FileMover.moveFile(e.path, dest);
             moved++;
           }
         } else if (e is Directory) {
@@ -399,7 +415,7 @@ class Importer {
               if (f is File) {
                 final dest = p.join(destDir, p.basename(f.path));
                 if (!File(dest).existsSync()) {
-                  _moveFile(f.path, dest);
+                  FileMover.moveFile(f.path, dest);
                   moved++;
                 }
               }
@@ -422,5 +438,19 @@ class Importer {
   static String _ext(String path) {
     final i = path.lastIndexOf('.');
     return i < 0 ? '' : path.substring(i).toLowerCase();
+  }
+
+  static String _friendlyFileError(Object error) {
+    if (error is FormatException) return error.message;
+    if (error is FileSystemException) {
+      final osMessage = error.osError?.message;
+      final path = error.path;
+      return [
+        error.message,
+        if (osMessage != null && osMessage.isNotEmpty) osMessage,
+        if (path != null && path.isNotEmpty) path,
+      ].join(' — ');
+    }
+    return error.toString();
   }
 }

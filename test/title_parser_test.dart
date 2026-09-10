@@ -22,4 +22,28 @@ void main() {
       expect(TitleParser.titleId('Game Update v1.6.0.nsp'), isNull);
     });
   });
+
+  test('normalizes an update title ID to its base game title ID', () {
+    expect(
+      TitleParser.canonicalBaseTitleId('0100C1B00A3A8800'),
+      '0100C1B00A3A8000',
+    );
+  });
+
+  test('keeps a base title ID unchanged and normalizes case', () {
+    expect(
+      TitleParser.canonicalBaseTitleId('0100c1b00a3a8000'),
+      '0100C1B00A3A8000',
+    );
+  });
+
+  test('does not extract a title ID from a longer hexadecimal token', () {
+    expect(TitleParser.titleId('Game 0100C1B00A3A8000AB.nsp'), isNull);
+  });
+
+  test('distinguishes update and base title IDs', () {
+    expect(TitleParser.isUpdateTitleId('0100C1B00A3A8800'), isTrue);
+    expect(TitleParser.isUpdateTitleId('0100C1B00A3A8000'), isFalse);
+    expect(TitleParser.isUpdateTitleId('not-a-title-id-800'), isFalse);
+  });
 }

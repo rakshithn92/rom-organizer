@@ -27,6 +27,7 @@ class _PermissionGateState extends State<PermissionGate> {
 
   Future<void> _check() async {
     final status = await Permission.manageExternalStorage.status;
+    if (!mounted) return;
     if (status.isGranted) {
       setState(() {
         _granted = true;
@@ -43,6 +44,7 @@ class _PermissionGateState extends State<PermissionGate> {
   Future<void> _request() async {
     setState(() => _checking = true);
     final status = await Permission.manageExternalStorage.request();
+    if (!mounted) return;
     setState(() {
       _granted = status.isGranted;
       _denied = status.isPermanentlyDenied;
@@ -52,6 +54,7 @@ class _PermissionGateState extends State<PermissionGate> {
 
   Future<void> _openSettings() async {
     await openAppSettings();
+    if (!mounted) return;
     _check();
   }
 

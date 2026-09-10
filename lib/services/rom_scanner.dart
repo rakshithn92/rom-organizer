@@ -2,39 +2,14 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-import 'importer.dart';
+import '../config/supported_formats.dart';
+import '../models/rom_file.dart';
+import 'title_parser.dart';
+
+export '../models/rom_file.dart';
 
 /// Recognized Nintendo Switch ROM container extensions.
-const Set<String> kSwitchRomExtensions = {
-  '.nsp', '.xci', '.nsz', '.xcz', '.nca',
-};
-
-/// A single ROM file discovered on disk.
-class RomFile {
-  final String path;
-  final String name; // file name with extension
-  final String baseName; // file name without extension
-  final String extension; // lowercased, with dot, e.g. '.nsp'
-  final int sizeBytes;
-  final DateTime modified;
-
-  const RomFile({
-    required this.path,
-    required this.name,
-    required this.baseName,
-    required this.extension,
-    required this.sizeBytes,
-    required this.modified,
-  });
-
-  String get sizeLabel {
-    const kb = 1024.0, mb = kb * 1024, gb = mb * 1024;
-    if (sizeBytes >= gb) return '${(sizeBytes / gb).toStringAsFixed(1)} GB';
-    if (sizeBytes >= mb) return '${(sizeBytes / mb).toStringAsFixed(0)} MB';
-    if (sizeBytes >= kb) return '${(sizeBytes / kb).toStringAsFixed(0)} KB';
-    return '$sizeBytes B';
-  }
-}
+const Set<String> kSwitchRomExtensions = SupportedFormats.switchRoms;
 
 /// Scans a directory for Switch ROM files (non-recursive by default).
 class RomScanner {
@@ -43,7 +18,13 @@ class RomScanner {
   List<RomFile> scan(Directory dir, {bool recursive = false}) {
     final out = <RomFile>[];
     if (!dir.existsSync()) return out;
-    for (final e in dir.listSync(followLinks: false)) {
+    final List<FileSystemEntity> entries;
+    try {
+      entries = dir.listSync(followLinks: false);
+    } on FileSystemException {
+      return out;
+    }
+    for (final e in entries) {
       if (e is File) {
         final ext = _ext(e.path);
         if (kSwitchRomExtensions.contains(ext)) {
@@ -66,21 +47,72 @@ class RomScanner {
 
   /// Recursively finds every importable file under [dir]: loose Switch ROMs
   /// AND archives (zip/tar/gz/bz2/xz). Returns absolute paths.
-  List<String> findImportables(Directory dir) {
+  List<String> findImportables(
+    Directory dir, {
+    Set<String> excludedRoots = const {},
+  }) {
     final out = <String>[];
     if (!dir.existsSync()) return out;
-    for (final e in dir.listSync(followLinks: false)) {
+    final normalizedDir = p.normalize(p.absolute(dir.path));
+    if (excludedRoots.any(
+      (root) => normalizedDir == p.normalize(p.absolute(root)),
+    )) {
+      return out;
+    }
+    final List<FileSystemEntity> entries;
+    try {
+      entries = dir.listSync(followLinks: false);
+    } on FileSystemException {
+      return out;
+    }
+    for (final e in entries) {
       if (e is File) {
         final ext = _ext(e.path);
         if (kSwitchRomExtensions.contains(ext) ||
-            kArchiveExtensions.contains(ext)) {
+            SupportedFormats.archives.contains(ext)) {
           out.add(e.path);
         }
       } else if (e is Directory) {
-        out.addAll(findImportables(e));
+        out.addAll(findImportables(e, excludedRoots: excludedRoots));
       }
     }
     return out;
+  }
+
+  /// Finds an existing game folder by inspecting the title IDs of its base
+  /// files. This is a fallback for libraries created before title IDs were
+  /// persisted in the database.
+  String? findGameFolderByTitleId(Directory libraryRoot, String titleId) {
+    if (!libraryRoot.existsSync()) return null;
+    final wanted = TitleParser.canonicalBaseTitleId(titleId);
+    final List<FileSystemEntity> games;
+    try {
+      games = libraryRoot.listSync(followLinks: false);
+    } on FileSystemException {
+      return null;
+    }
+    for (final game in games) {
+      if (game is! Directory) continue;
+      final List<FileSystemEntity> entries;
+      try {
+        entries = game.listSync(followLinks: false);
+      } on FileSystemException {
+        continue;
+      }
+      for (final entry in entries) {
+        if (entry is! File ||
+            !kSwitchRomExtensions.contains(_ext(entry.path))) {
+          continue;
+        }
+        final candidate = TitleParser.titleId(p.basename(entry.path));
+        if (candidate != null &&
+            !TitleParser.isUpdateTitleId(candidate) &&
+            TitleParser.canonicalBaseTitleId(candidate) == wanted) {
+          return game.path;
+        }
+      }
+    }
+    return null;
   }
 
   static String _ext(String path) {

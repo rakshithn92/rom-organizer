@@ -1,6 +1,8 @@
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
+import 'title_parser.dart';
+
 /// SQLite persistence for app settings (TheGamesDB API key, cached cover art).
 class TagDb {
   static Database? _db;
@@ -59,7 +61,10 @@ class TagDb {
   // Stored as settings rows keyed "titleid:<folderPath>" = "<titleId>".
 
   Future<void> saveTitleId(String folderPath, String titleId) =>
-      saveSetting('titleid:$folderPath', titleId);
+      saveSetting(
+        'titleid:$folderPath',
+        TitleParser.canonicalBaseTitleId(titleId),
+      );
 
   Future<String?> titleIdForFolder(String folderPath) =>
       getSetting('titleid:$folderPath');
@@ -71,8 +76,11 @@ class TagDb {
   Future<String?> folderForTitleId(String titleId) async {
     final db = await _database;
     final rows = await db.query('settings', where: "key LIKE 'titleid:%'");
+    final wanted = TitleParser.canonicalBaseTitleId(titleId);
     for (final r in rows) {
-      if (r['value'] == titleId) {
+      // Normalize both sides so databases created by older app versions, which
+      // stored the raw ID, continue to work without a schema migration.
+      if (TitleParser.canonicalBaseTitleId(r['value'] as String) == wanted) {
         return (r['key'] as String).substring('titleid:'.length);
       }
     }

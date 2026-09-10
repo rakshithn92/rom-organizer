@@ -1,13 +1,18 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import '../config/app_paths.dart';
+import '../config/supported_formats.dart';
 import '../services/importer.dart';
 import '../services/rom_scanner.dart';
 import '../services/tag_db.dart';
 import '../services/thegamesdb_client.dart';
 import '../services/title_parser.dart';
+import '../services/zip_classifier.dart';
+
 /// Import flow: browse to a zip, auto-title it from TheGamesDB, extract into
 /// the per-game library layout, then offer to delete the zip once fully
 /// extracted (to reclaim space).
@@ -19,11 +24,9 @@ class ImportScreen extends StatefulWidget {
 }
 
 class _ImportScreenState extends State<ImportScreen> {
-  static const _libraryRoot = '/storage/emulated/0/ROMs/Switch';
-  static const _defaultStart = '/storage/emulated/0/Download';
   final TagDb _db = TagDb();
 
-  Directory _current = Directory(_defaultStart);
+  Directory _current = Directory(AppPaths.defaultImportRoot);
   List<Directory> _subdirs = [];
   List<File> _archives = [];
   List<File> _roms = [];
@@ -45,7 +48,7 @@ class _ImportScreenState extends State<ImportScreen> {
           dirs.add(e);
         } else if (e is File) {
           final ext = p.extension(e.path).toLowerCase();
-          if (kArchiveExtensions.contains(ext)) {
+          if (SupportedFormats.archives.contains(ext)) {
             archives.add(e);
           } else if (kSwitchRomExtensions.contains(ext)) {
             roms.add(e);
@@ -84,7 +87,7 @@ class _ImportScreenState extends State<ImportScreen> {
     final key = await _db.getSetting('thegamesdb_api_key');
     if (key != null && key.isNotEmpty) {
       try {
-        final meta = await TheGamesDbClient(key).search(candidate);
+        final meta = await TheGamesDbClient.searchOnce(key, candidate);
         if (meta != null && meta.title.isNotEmpty) return meta.title;
       } catch (_) {
         // Fall back to the parsed candidate.
@@ -93,19 +96,59 @@ class _ImportScreenState extends State<ImportScreen> {
     return candidate;
   }
 
-  /// Resolves the target game folder for [fileName] by title ID first. The
-  /// base game and its updates share the same title ID, so an update with a
-  /// title ID in its filename lands in the base's folder regardless of how the
-  /// titles differ. Returns null if no title ID match is found (caller falls
-  /// back to name-based resolution).
+  /// Resolves the target game folder for [fileName] by title ID first. Update
+  /// IDs are normalized to their corresponding base-game IDs by [TagDb], so an
+  /// update lands in the base's folder regardless of how their titles differ.
+  /// Returns null if no title ID match is found (caller falls back to
+  /// name-based resolution).
   Future<String?> _resolveTargetByTitleId(String fileName) async {
     final id = TitleParser.titleId(fileName);
     if (id == null) return null;
-    return _db.folderForTitleId(id);
+    final stored = await _db.folderForTitleId(id);
+    if (stored != null && Directory(stored).existsSync()) return stored;
+
+    // Older app versions did not persist IDs for every import. Inspect the
+    // already-organized base filenames once, then backfill the cache.
+    final discovered = RomScanner().findGameFolderByTitleId(
+      Directory(AppPaths.libraryRoot),
+      id,
+    );
+    if (discovered != null) await _db.saveTitleId(discovered, id);
+    return discovered;
+  }
+
+  Future<String?> _pickExistingGameFolder() async {
+    final root = Directory(AppPaths.libraryRoot);
+    if (!root.existsSync()) return null;
+    final games = root
+        .listSync(followLinks: false)
+        .whereType<Directory>()
+        .toList()
+      ..sort((a, b) => a.path.compareTo(b.path));
+    if (games.isEmpty || !mounted) return null;
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Choose the base game'),
+        children: [
+          for (final game in games)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, game.path),
+              child: Text(p.basename(game.path)),
+            ),
+        ],
+      ),
+    );
   }
 
   Future<void> _autoImport() async {
-    final files = RomScanner().findImportables(_current);
+    final currentPath = _current.path;
+    final files = await Isolate.run(
+      () => RomScanner().findImportables(
+        Directory(currentPath),
+        excludedRoots: const {AppPaths.libraryRoot},
+      ),
+    );
     if (files.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -119,7 +162,7 @@ class _ImportScreenState extends State<ImportScreen> {
     // destructive action (deletes the user's original zips), so it must be
     // confirmed — not done silently in a bulk loop.
     final hasArchive = files.any((f) =>
-        kArchiveExtensions.contains(p.extension(f).toLowerCase()));
+        SupportedFormats.archives.contains(p.extension(f).toLowerCase()));
     var deleteArchives = false;
     if (hasArchive) {
       deleteArchives = await showDialog<bool>(
@@ -147,8 +190,8 @@ class _ImportScreenState extends State<ImportScreen> {
     }
 
     setState(() => _busy = true);
-    final importer = Importer(_libraryRoot);
-    var imported = 0, skipped = 0;
+    final importer = Importer(AppPaths.libraryRoot);
+    var imported = 0, skipped = 0, warnings = 0;
     for (final path in files) {
       final ext = p.extension(path).toLowerCase();
       // 7z/rar can't be decoded in-app — skip them (user extracts via built-in).
@@ -156,9 +199,9 @@ class _ImportScreenState extends State<ImportScreen> {
         skipped++;
         continue;
       }
-      final isArchive = kArchiveExtensions.contains(ext);
+      final isArchive = SupportedFormats.archives.contains(ext);
       final title = await _resolveTitle(TitleParser.clean(p.basename(path)));
-      // Match by title ID first (base + updates share the same ID).
+      // Match by title ID first (update IDs normalize to their base IDs).
       final target = await _resolveTargetByTitleId(p.basename(path));
 
       final result = isArchive
@@ -166,9 +209,10 @@ class _ImportScreenState extends State<ImportScreen> {
           : await importer.importFile(path, title, targetFolder: target);
       if (result.error == null) {
         imported++;
+        if (result.warning != null) warnings++;
         // Store the title ID on the base folder so future updates can match.
-        if (!isArchive && result.baseFiles > 0) {
-          final id = TitleParser.titleId(p.basename(path));
+        if (result.baseFiles > 0) {
+          final id = result.titleId ?? TitleParser.titleId(p.basename(path));
           if (id != null) await _db.saveTitleId(result.gameFolder, id);
         }
         // Delete the archive only if the user chose to.
@@ -184,11 +228,14 @@ class _ImportScreenState extends State<ImportScreen> {
       }
     }
 
-    setState(() => _busy = false);
     if (!mounted) return;
+    setState(() => _busy = false);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Imported $imported, skipped $skipped.'),
+        content: Text(
+          'Imported $imported, skipped $skipped.'
+          '${warnings > 0 ? ' $warnings original file(s) must be deleted manually.' : ''}',
+        ),
       ),
     );
     _load();
@@ -226,8 +273,8 @@ class _ImportScreenState extends State<ImportScreen> {
     // 1. Candidate title from the filename, resolved via TheGamesDB.
     final resolved = await _resolveTitle(TitleParser.clean(p.basename(file.path)));
 
-    setState(() => _busy = false);
     if (!mounted) return;
+    setState(() => _busy = false);
 
     // 3. Confirm / edit the title.
     final controller = TextEditingController(text: resolved);
@@ -252,14 +299,23 @@ class _ImportScreenState extends State<ImportScreen> {
         ],
       ),
     );
+    controller.dispose();
     if (title == null || title.isEmpty) return;
 
-    // 4. Import: extract a zip, or move a loose ROM. Match by title ID first
-    //    (base + updates share the same ID) so an update lands in its base.
+    // 4. Import: extract a zip, or move a loose ROM. Match by title ID first;
+    //    update IDs normalize to their base IDs so the update lands correctly.
     if (!mounted) return;
     setState(() => _busy = true);
-    final importer = Importer(_libraryRoot);
-    final target = await _resolveTargetByTitleId(p.basename(file.path));
+    final importer = Importer(AppPaths.libraryRoot);
+    var target = await _resolveTargetByTitleId(p.basename(file.path));
+    final kind = ZipClassifier.classifyPath(p.basename(file.path));
+    if (!isArchive && target == null && kind != RomEntryKind.base) {
+      target = await _pickExistingGameFolder();
+      if (target == null) {
+        if (mounted) setState(() => _busy = false);
+        return;
+      }
+    }
     final result = isArchive
         ? await importer.importArchive(file.path, title, targetFolder: target)
         : await importer.importFile(file.path, title, targetFolder: target);
@@ -274,9 +330,15 @@ class _ImportScreenState extends State<ImportScreen> {
       return;
     }
 
+    if (result.warning != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.warning!)),
+      );
+    }
+
     // Store the title ID on the base folder so future updates can match.
-    if (!isArchive && result.baseFiles > 0) {
-      final id = TitleParser.titleId(p.basename(file.path));
+    if (result.baseFiles > 0) {
+      final id = result.titleId ?? TitleParser.titleId(p.basename(file.path));
       if (id != null) await _db.saveTitleId(result.gameFolder, id);
     }
     if (!mounted) return;
@@ -321,7 +383,7 @@ class _ImportScreenState extends State<ImportScreen> {
           }
         }
       }
-    } else {
+    } else if (isArchive) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -329,6 +391,10 @@ class _ImportScreenState extends State<ImportScreen> {
           ),
         );
       }
+    } else if (result.warning == null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ROM imported successfully.')),
+      );
     }
     _load();
   }
@@ -338,7 +404,7 @@ class _ImportScreenState extends State<ImportScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_current.path),
-        leading: _current.path != '/storage/emulated/0'
+        leading: _current.path != AppPaths.sharedStorageRoot
             ? IconButton(icon: const Icon(Icons.arrow_upward), onPressed: _up)
             : null,
         actions: [
