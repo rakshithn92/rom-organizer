@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 
+import 'title_parser.dart';
+
 /// Classification of a single entry inside a game zip.
 enum RomEntryKind { base, update, dlc }
 
@@ -59,6 +61,14 @@ class ZipClassifier {
     }
     if (lower.contains('/dlc/') || lower.startsWith('dlc/')) {
       return RomEntryKind.dlc;
+    }
+
+    // Scene-style filenames often contain only a title ID and an integer
+    // version, for example "Game [0100...8800][v65536].nsp". The update ID is
+    // authoritative and prevents these files from being mistaken for bases.
+    final titleId = TitleParser.titleId(name);
+    if (titleId != null && TitleParser.isUpdateTitleId(titleId)) {
+      return RomEntryKind.update;
     }
 
     // Filename markers.

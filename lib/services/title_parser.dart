@@ -12,7 +12,8 @@ class TitleParser {
       RegExp(r'(?<![0-9])v\d+(\.\d+)*', caseSensitive: false);
   static final _updateWord = RegExp(r'\b(update|upd|patch|dlc|addon)\b',
       caseSensitive: false);
-  static final _titleId = RegExp(r'0100[0-9A-Fa-f]{8,}');
+  static final _titleId =
+      RegExp(r'(?<![0-9A-Fa-f])0100[0-9A-Fa-f]{12}(?![0-9A-Fa-f])');
 
   /// Returns a clean title for [fileName] (with or without extension).
   static String clean(String fileName) {
@@ -42,10 +43,31 @@ class TitleParser {
   }
 
   /// Extracts the Switch title ID (e.g. `0100C1B00A3A8000`) from [fileName],
-  /// or null if none is present. The base game and its updates share the same
-  /// title ID, so it's the ground truth for matching an update to its base.
+  /// or null if none is present. Use [canonicalBaseTitleId] before comparing a
+  /// base game's ID with its update ID.
   static String? titleId(String fileName) {
     final m = _titleId.firstMatch(fileName);
-    return m?.group(0);
+    return m?.group(0)?.toUpperCase();
+  }
+
+  /// Returns the base-application ID used to match a game and its update.
+  ///
+  /// Switch update title IDs use the base game's ID with the final three hex
+  /// digits changed from `000` to `800`. Persisting and comparing the
+  /// normalized `...000` form lets an update downloaded later find a base game
+  /// that was previously imported as a loose file or from an archive.
+  static String canonicalBaseTitleId(String titleId) {
+    final normalized = titleId.toUpperCase();
+    if (isUpdateTitleId(normalized)) {
+      return '${normalized.substring(0, normalized.length - 3)}000';
+    }
+    return normalized;
+  }
+
+  /// Whether [titleId] identifies an update rather than a base application.
+  static bool isUpdateTitleId(String titleId) {
+    final normalized = titleId.toUpperCase();
+    final match = _titleId.firstMatch(normalized);
+    return match?.group(0) == normalized && normalized.endsWith('800');
   }
 }

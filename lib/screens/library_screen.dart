@@ -1,9 +1,13 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import '../config/app_paths.dart';
+import '../services/file_mover.dart';
 import '../services/importer.dart';
+import '../services/safe_paths.dart';
 import '../services/tag_db.dart';
 import '../services/thegamesdb_client.dart';
 
@@ -17,7 +21,6 @@ class LibraryScreen extends StatefulWidget {
 }
 
 class _LibraryScreenState extends State<LibraryScreen> {
-  static const _libraryRoot = '/storage/emulated/0/ROMs/Switch';
   final TagDb _db = TagDb();
 
   List<Directory> _games = [];
@@ -34,7 +37,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final root = Directory(_libraryRoot);
+    final root = Directory(AppPaths.libraryRoot);
     final games = <Directory>[];
     if (root.existsSync()) {
       for (final e in root.listSync(followLinks: false)) {
@@ -52,7 +55,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
         covers[g.path] = cached;
       } else if (key != null && key.isNotEmpty) {
         try {
-          final meta = await TheGamesDbClient(key).search(p.basename(g.path));
+          final meta = await TheGamesDbClient.searchOnce(
+            key,
+            p.basename(g.path),
+          );
           if (meta?.boxartUrl != null) {
             covers[g.path] = meta!.boxartUrl!;
             await _db.saveSetting('cover:${g.path}', meta.boxartUrl!);
@@ -108,7 +114,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
     if (confirm != true || !mounted) return;
 
-    final moved = Importer(_libraryRoot).mergeGames(target.path, sources);
+    final moved = await Isolate.run(
+      () => Importer(AppPaths.libraryRoot).mergeGames(target.path, sources),
+    );
+    if (!mounted) return;
     // Remove the cover + title-ID cache keys for the merged-away source folders.
     final db = TagDb();
     for (final s in sources) {
@@ -228,12 +237,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
     if (confirm != true || !mounted) return;
 
-    final importer = Importer(_libraryRoot);
-    var deleted = 0;
-    for (final g in _games) {
-      deleted += importer.deleteOldUpdates(g.path);
-    }
-    final missing = importer.findMissingUpdates();
+    final gamePaths = _games.map((game) => game.path).toList();
+    final result = await Isolate.run(() {
+      final importer = Importer(AppPaths.libraryRoot);
+      var deleted = 0;
+      for (final gamePath in gamePaths) {
+        deleted += importer.deleteOldUpdates(gamePath);
+      }
+      return (deleted: deleted, missing: importer.findMissingUpdates());
+    });
+    final deleted = result.deleted;
+    final missing = result.missing;
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -536,23 +550,26 @@ class _GameDetailState extends State<_GameDetail> {
         ],
       ),
     );
+    controller.dispose();
     if (newName == null || newName.isEmpty || newName == p.basename(game.path)) {
       return;
     }
 
-    final newPath = p.join(p.dirname(game.path), newName);
+    late final String newPath;
     try {
+      newPath = SafePaths.gameFolder(p.dirname(game.path), newName);
+      if (Directory(newPath).existsSync()) {
+        throw FileSystemException(
+          'A game folder with that name already exists. Use Merge instead.',
+          newPath,
+        );
+      }
       // Move the cover cache key along with the folder.
       final db = TagDb();
       final cover = await db.getSetting('cover:${game.path}');
-      // Rename the folder, falling back to copy+delete if rename fails
-      // (Android can throw "Operation not permitted" on some paths).
-      try {
-        game.renameSync(newPath);
-      } catch (_) {
-        _copyDir(game, newPath);
-        game.deleteSync(recursive: true);
-      }
+      // Move off the UI isolate; cross-volume moves safely fall back to a
+      // recursive copy while retaining the source if that copy fails.
+      await Isolate.run(() => FileMover.moveDirectory(game.path, newPath));
       if (cover != null) {
         await db.saveSetting('cover:$newPath', cover);
         await db.deleteSetting('cover:${game.path}');
@@ -573,18 +590,6 @@ class _GameDetailState extends State<_GameDetail> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Rename failed: $e')),
         );
-      }
-    }
-  }
-
-  /// Recursively copies [src] to [dest] (used when a folder rename fails).
-  void _copyDir(Directory src, String dest) {
-    Directory(dest).createSync(recursive: true);
-    for (final e in src.listSync(followLinks: false)) {
-      if (e is File) {
-        File(e.path).copySync(p.join(dest, p.basename(e.path)));
-      } else if (e is Directory) {
-        _copyDir(e, p.join(dest, p.basename(e.path)));
       }
     }
   }

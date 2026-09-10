@@ -23,6 +23,16 @@ class TheGamesDbClient {
   TheGamesDbClient(this.apiKey, {http.Client? client})
       : _http = client ?? http.Client();
 
+  /// Performs a one-off lookup and always releases its HTTP client.
+  static Future<GameMetadata?> searchOnce(String apiKey, String query) async {
+    final client = TheGamesDbClient(apiKey);
+    try {
+      return await client.search(query);
+    } finally {
+      client.close();
+    }
+  }
+
   /// Searches for a game by name and returns the best Switch-platform match,
   /// with its boxart. Returns null if nothing matches.
   Future<GameMetadata?> search(String query) async {
@@ -74,7 +84,7 @@ class TheGamesDbClient {
         as String?;
     final artData = (boxart?['data'] as Map<String, dynamic>?)?[id]
         as List<dynamic>?;
-    if (baseUrl != null && artData != null) {
+    if (baseUrl != null && artData != null && artData.isNotEmpty) {
       for (final a in artData) {
         final m = a as Map<String, dynamic>;
         if (m['type'] == 'boxart' && m['side'] == 'front') {
