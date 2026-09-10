@@ -192,44 +192,48 @@ class _ImportScreenState extends State<ImportScreen> {
     setState(() => _busy = true);
     final importer = Importer(AppPaths.libraryRoot);
     var imported = 0, skipped = 0, warnings = 0;
-    for (final path in files) {
-      final ext = p.extension(path).toLowerCase();
-      // 7z/rar can't be decoded in-app — skip them (user extracts via built-in).
-      if (ext == '.7z' || ext == '.rar') {
-        skipped++;
-        continue;
-      }
-      final isArchive = SupportedFormats.archives.contains(ext);
-      final title = await _resolveTitle(TitleParser.clean(p.basename(path)));
-      // Match by title ID first (update IDs normalize to their base IDs).
-      final target = await _resolveTargetByTitleId(p.basename(path));
+    try {
+      for (final path in files) {
+        final ext = p.extension(path).toLowerCase();
+        // 7z/rar can't be decoded in-app — skip them (user extracts via built-in).
+        if (ext == '.7z' || ext == '.rar') {
+          skipped++;
+          continue;
+        }
+        final isArchive = SupportedFormats.archives.contains(ext);
+        final title = await _resolveTitle(TitleParser.clean(p.basename(path)));
+        // Match by title ID first (update IDs normalize to their base IDs).
+        final target = await _resolveTargetByTitleId(p.basename(path));
 
-      final result = isArchive
-          ? await importer.importArchive(path, title, targetFolder: target)
-          : await importer.importFile(path, title, targetFolder: target);
-      if (result.error == null) {
-        imported++;
-        if (result.warning != null) warnings++;
-        // Store the title ID on the base folder so future updates can match.
-        if (result.baseFiles > 0) {
-          final id = result.titleId ?? TitleParser.titleId(p.basename(path));
-          if (id != null) await _db.saveTitleId(result.gameFolder, id);
-        }
-        // Delete the archive only if the user chose to.
-        if (isArchive && result.fullyExtracted && deleteArchives) {
-          try {
-            File(path).deleteSync();
-          } catch (_) {
-            // Non-fatal — leave the archive.
+        final result = isArchive
+            ? await importer.importArchive(path, title, targetFolder: target)
+            : await importer.importFile(path, title, targetFolder: target);
+        if (result.error == null) {
+          imported++;
+          if (result.warning != null) warnings++;
+          // Store the title ID on the base folder so future updates can match.
+          if (result.baseFiles > 0) {
+            final id = result.titleId ?? TitleParser.titleId(p.basename(path));
+            if (id != null) await _db.saveTitleId(result.gameFolder, id);
           }
+          // Delete the archive only if the user chose to.
+          if (isArchive && result.fullyExtracted && deleteArchives) {
+            try {
+              File(path).deleteSync();
+            } catch (_) {
+              // Non-fatal — leave the archive.
+            }
+          }
+        } else {
+          skipped++;
         }
-      } else {
-        skipped++;
       }
+    } finally {
+      // Always clear the busy flag so the button can't get stuck disabled.
+      if (mounted) setState(() => _busy = false);
     }
 
     if (!mounted) return;
-    setState(() => _busy = false);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -307,20 +311,21 @@ class _ImportScreenState extends State<ImportScreen> {
     if (!mounted) return;
     setState(() => _busy = true);
     final importer = Importer(AppPaths.libraryRoot);
-    var target = await _resolveTargetByTitleId(p.basename(file.path));
-    final kind = ZipClassifier.classifyPath(p.basename(file.path));
-    if (!isArchive && target == null && kind != RomEntryKind.base) {
-      target = await _pickExistingGameFolder();
-      if (target == null) {
-        if (mounted) setState(() => _busy = false);
-        return;
+    ImportResult result;
+    try {
+      var target = await _resolveTargetByTitleId(p.basename(file.path));
+      final kind = ZipClassifier.classifyPath(p.basename(file.path));
+      if (!isArchive && target == null && kind != RomEntryKind.base) {
+        target = await _pickExistingGameFolder();
+        if (target == null) return;
       }
+      result = isArchive
+          ? await importer.importArchive(file.path, title, targetFolder: target)
+          : await importer.importFile(file.path, title, targetFolder: target);
+    } finally {
+      // Always clear the busy flag so the button can't get stuck disabled.
+      if (mounted) setState(() => _busy = false);
     }
-    final result = isArchive
-        ? await importer.importArchive(file.path, title, targetFolder: target)
-        : await importer.importFile(file.path, title, targetFolder: target);
-    if (!mounted) return;
-    setState(() => _busy = false);
     if (!mounted) return;
 
     if (result.error != null) {
