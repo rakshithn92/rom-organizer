@@ -1,9 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- All-files access: this is a personal ROM organizer that must browse,
-         sort, rename and tag arbitrary folders under /storage/emulated/0.
-         MANAGE_EXTERNAL_STORAGE is the pragmatic route for a sideloaded tool
-         (SAF has no native rename). Not Play-Store friendly — revisit if we
-         ever publish. -->
+    <!-- Direct path access is used for large moves, archive extraction, and a
+         one-time migration from the pre-Downloads library. The Flutter UI is
+         confined to /Download even though Android exposes a broader grant. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <!-- Network access for TheGamesDB metadata + cover art lookup. -->
     <uses-permission android:name="android.permission.INTERNET" />

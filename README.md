@@ -9,7 +9,7 @@ separated, and reclaim space by deleting fully-extracted zips.
 - **Import pipeline** — browse to a `.zip`, `.tar`, `.gz`, `.bz2`, `.xz` archive
   **or an already-extracted `.nsp` / `.xci` ROM**, auto-resolve the real game
   title from TheGamesDB (editable), and organize it into a per-game folder.
-  The import view starts in `Download/` by default.
+  The import view starts in `Download/` and cannot browse above it.
 - **Auto-import** — tap the ✨ button to recursively scan the current folder
   and import every Switch ROM and archive it finds, auto-titling each one. The
   organized library itself is excluded from scans so files already imported are
@@ -21,7 +21,7 @@ separated, and reclaim space by deleting fully-extracted zips.
 - **Clean layout** — each game gets its own folder, with update files in an
   `update/` subfolder:
   ```
-  /storage/emulated/0/ROMs/Switch/
+  /storage/emulated/0/Download/ROM Manager/ROMs/
     The Legend of Zelda - Breath of the Wild/
       The.Legend.of.Zelda.Breath.of.the.Wild.nsp
       update/
@@ -31,6 +31,12 @@ separated, and reclaim space by deleting fully-extracted zips.
   and, once verified fully extracted, you're offered to delete it to reclaim
   space. An already-extracted `.nsp`/`.xci` is moved into the library (no copy,
   no leftover).
+- **Downloads-scoped storage** — organized games live in
+  `Download/ROM Manager/ROMs/`, while app-managed content lives in
+  `Download/ROM Manager/Content/`. On the first launch after upgrading, the
+  app safely moves data from the old `/ROMs/Switch`, `/ROMs`, `/ROM`, and
+  `/Content` locations (including `Download/ROM` and `Download/Content`).
+  Existing destination files are never overwritten.
 - **Library view** — grid of your games with cover art (fetched from
   TheGamesDB and cached locally), an "has update" badge, and a detail view
   listing base + update files.
@@ -45,7 +51,9 @@ separated, and reclaim space by deleting fully-extracted zips.
 ## Requirements
 
 - Android device with **all-files access** granted (the app prompts on first
-  launch). This is a sideloaded tool — it is **not** on the Play Store.
+  launch). Direct filesystem access is needed for large moves, extraction, and
+  the one-time legacy migration; the app's browser remains confined to
+  Downloads. This sideloaded tool is **not** on the Play Store.
 - A free **TheGamesDB API key** for title + cover-art lookup. Create an account
   at [thegamesdb.net](https://thegamesdb.net), then grab your key at
   [api.thegamesdb.net/key.php](https://api.thegamesdb.net/key.php). Paste it in

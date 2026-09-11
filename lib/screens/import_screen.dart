@@ -39,6 +39,9 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   Future<void> _load() async {
+    if (!_isInDownloads(_current.path)) {
+      _current = Directory(AppPaths.downloadsRoot);
+    }
     final dirs = <Directory>[];
     final archives = <File>[];
     final roms = <File>[];
@@ -70,13 +73,15 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   void _enter(Directory d) {
+    if (!_isInDownloads(d.path)) return;
     setState(() => _current = d);
     _load();
   }
 
   void _up() {
+    if (p.equals(p.normalize(_current.path), AppPaths.downloadsRoot)) return;
     final parent = _current.parent;
-    if (parent.path == _current.path) return;
+    if (!_isInDownloads(parent.path)) return;
     setState(() => _current = parent);
     _load();
   }
@@ -151,9 +156,10 @@ class _ImportScreenState extends State<ImportScreen> {
       final files = await Isolate.run(
         () => RomScanner().findImportables(
           Directory(currentPath),
-          excludedRoots: const {AppPaths.libraryRoot},
+          excludedRoots: const {AppPaths.managerRoot},
         ),
       );
+      if (!mounted) return;
       if (files.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -411,7 +417,7 @@ class _ImportScreenState extends State<ImportScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_current.path),
-        leading: _current.path != AppPaths.sharedStorageRoot
+        leading: !p.equals(p.normalize(_current.path), AppPaths.downloadsRoot)
             ? IconButton(icon: const Icon(Icons.arrow_upward), onPressed: _up)
             : null,
         actions: [
@@ -471,5 +477,11 @@ class _ImportScreenState extends State<ImportScreen> {
     if (bytes >= gb) return '${(bytes / gb).toStringAsFixed(1)} GB';
     if (bytes >= mb) return '${(bytes / mb).toStringAsFixed(0)} MB';
     return '$bytes B';
+  }
+
+  static bool _isInDownloads(String candidate) {
+    final path = p.normalize(p.absolute(candidate));
+    final root = p.normalize(p.absolute(AppPaths.downloadsRoot));
+    return p.equals(path, root) || p.isWithin(root, path);
   }
 }

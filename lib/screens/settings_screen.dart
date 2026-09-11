@@ -16,6 +16,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _keyController = TextEditingController();
   bool _loaded = false;
   bool _obscureKey = true;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -33,11 +34,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _save() async {
-    await _db.saveSetting('thegamesdb_api_key', _keyController.text.trim());
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('API key saved')),
-    );
+    setState(() => _saving = true);
+    try {
+      await _db.saveSetting('thegamesdb_api_key', _keyController.text.trim());
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('API key saved')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save API key: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
@@ -93,9 +105,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 16),
                 FilledButton.icon(
-                  onPressed: _save,
+                  onPressed: _saving ? null : _save,
                   icon: const Icon(Icons.save),
-                  label: const Text('Save key'),
+                  label: Text(_saving ? 'Saving…' : 'Save key'),
                 ),
               ],
             )
@@ -123,7 +135,24 @@ class LinkButton extends StatelessWidget {
       leading: Icon(icon),
       title: Text(label, style: const TextStyle(color: Colors.blue)),
       trailing: const Icon(Icons.open_in_new, size: 18),
-      onTap: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+      onTap: () async {
+        final messenger = ScaffoldMessenger.of(context);
+        try {
+          final opened = await launchUrl(
+            Uri.parse(url),
+            mode: LaunchMode.externalApplication,
+          );
+          if (!opened) {
+            messenger.showSnackBar(
+              const SnackBar(content: Text('Could not open this link.')),
+            );
+          }
+        } catch (e) {
+          messenger.showSnackBar(
+            SnackBar(content: Text('Could not open this link: $e')),
+          );
+        }
+      },
     );
   }
 }
