@@ -57,6 +57,34 @@ class TagDb {
     await db.delete('settings', where: 'key = ?', whereArgs: [key]);
   }
 
+  /// Rewrites cached keys that contain absolute game-folder paths after the
+  /// one-time move into Downloads. Existing destination keys win.
+  Future<void> migratePathPrefix(String oldPrefix, String newPrefix) async {
+    final db = await _database;
+    final rows = await db.query('settings');
+    await db.transaction((txn) async {
+      for (final row in rows) {
+        final key = row['key'] as String;
+        final separator = key.indexOf(':') + 1;
+        final storedPath = key.substring(separator);
+        final hasOldPrefix = storedPath == oldPrefix ||
+            storedPath.startsWith('$oldPrefix${p.separator}');
+        if ((!key.startsWith('cover:') && !key.startsWith('titleid:')) ||
+            !hasOldPrefix) {
+          continue;
+        }
+        final migratedKey =
+            '${key.substring(0, separator)}$newPrefix${key.substring(separator + oldPrefix.length)}';
+        await txn.insert(
+          'settings',
+          {'key': migratedKey, 'value': row['value']},
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+        await txn.delete('settings', where: 'key = ?', whereArgs: [key]);
+      }
+    });
+  }
+
   // ---- Title-ID metadata (base game <-> update matching) ----
   // Stored as settings rows keyed "titleid:<folderPath>" = "<titleId>".
 
