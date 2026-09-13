@@ -14,11 +14,21 @@ abstract final class FileMover {
       File(source).renameSync(destination);
       return true;
     } on FileSystemException {
-      File(source).copySync(destination);
+      try {
+        File(source).copySync(destination);
+      } on FileSystemException {
+        // A failed fallback must leave the original intact and remove only the
+        // incomplete copy produced by this operation; otherwise a retry would
+        // see a corrupt destination and refuse with "already exists".
+        final partial = File(destination);
+        if (partial.existsSync()) partial.deleteSync();
+        rethrow;
+      }
       try {
         File(source).deleteSync();
         return true;
       } on FileSystemException {
+        // The copy is complete; Android just refused to remove the source.
         return false;
       }
     }

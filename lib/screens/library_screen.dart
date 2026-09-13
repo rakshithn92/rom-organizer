@@ -11,6 +11,18 @@ import '../services/safe_paths.dart';
 import '../services/tag_db.dart';
 import '../services/thegamesdb_client.dart';
 
+/// True if [dir] contains any file anywhere, recursively. A folder is only
+/// "empty" when this returns false, so real ROMs in non-standard subdirs are
+/// never mistaken for empty shells.
+bool _dirHasAnyFileRecursive(Directory dir) {
+  if (!dir.existsSync()) return false;
+  for (final e in dir.listSync(followLinks: false)) {
+    if (e is File) return true;
+    if (e is Directory && _dirHasAnyFileRecursive(e)) return true;
+  }
+  return false;
+}
+
 /// Library view: lists the organized per-game folders under the library root,
 /// with cover art (from TheGamesDB) and the update/ subfolder count.
 class LibraryScreen extends StatefulWidget {
@@ -28,6 +40,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   bool _loading = true;
   bool _mergeMode = false;
   final Set<String> _selected = {}; // paths selected for merge
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -36,6 +49,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _load() async {
+    final gen = ++_loadGeneration;
     setState(() => _loading = true);
     final root = Directory(AppPaths.libraryRoot);
     final games = <Directory>[];
@@ -69,7 +83,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       }
     }
 
-    if (!mounted) return;
+    if (gen != _loadGeneration || !mounted) return;
     setState(() {
       _games = games;
       _covers = covers;
@@ -118,8 +132,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
       () => Importer(AppPaths.libraryRoot).mergeGames(target.path, sources),
     );
     if (!mounted) return;
-    // Remove the cover + title-ID cache keys for the merged-away source folders.
+    // Remove the cover + title-ID cache keys for the merged-away source folders,
+    // but first carry a source title-ID onto the target if it has none yet.
     final db = TagDb();
+    String? capturedTitleId;
+    for (final s in sources) {
+      capturedTitleId ??= await db.titleIdForFolder(s);
+    }
+    if (capturedTitleId != null &&
+        await db.titleIdForFolder(target.path) == null) {
+      await db.saveTitleId(target.path, capturedTitleId);
+    }
     for (final s in sources) {
       await db.deleteSetting('cover:$s');
       await db.deleteTitleId(s);
@@ -139,23 +162,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// True if a game folder has no files anywhere (base, update/, dlc/, or any
   /// other subdirectory). A folder with ANY file in ANY subfolder is NOT empty
   /// — otherwise cleanup could delete real ROMs in a non-standard subdir.
-  bool _isEmptyFolder(Directory dir) {
-    for (final e in dir.listSync(followLinks: false)) {
-      if (e is File) return false;
-      if (e is Directory) {
-        if (_dirHasAnyFile(e)) return false;
-      }
-    }
-    return true;
-  }
-
-  bool _dirHasAnyFile(Directory dir) {
-    for (final e in dir.listSync(followLinks: false)) {
-      if (e is File) return true;
-      if (e is Directory && _dirHasAnyFile(e)) return true;
-    }
-    return false;
-  }
+  bool _isEmptyFolder(Directory dir) => !_dirHasAnyFileRecursive(dir);
 
   /// Deletes every game folder that contains no files (empty shells left over
   /// from title splits or failed extractions). Never touches a folder with
@@ -360,7 +367,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                       _selected.remove(_games[i].path);
                                     }
                                   })
-                              : null,
+                              : () async {
+                                  final changed = await Navigator.push<bool>(
+                                    ctx,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          _GameDetail(game: _games[i]),
+                                    ),
+                                  );
+                                  if (changed == true && mounted) _load();
+                                },
                         ),
                       ),
                     ),
@@ -557,7 +573,10 @@ class _GameDetailState extends State<_GameDetail> {
 
     late final String newPath;
     try {
-      newPath = SafePaths.gameFolder(p.dirname(game.path), newName);
+      newPath = SafePaths.existingGameFolder(
+        p.dirname(game.path),
+        p.join(p.dirname(game.path), Importer.sanitizeFolderName(newName)),
+      );
       if (Directory(newPath).existsSync()) {
         throw FileSystemException(
           'A game folder with that name already exists. Use Merge instead.',
@@ -585,6 +604,7 @@ class _GameDetailState extends State<_GameDetail> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Game renamed.')),
       );
+      Navigator.pop(context, true);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -599,8 +619,11 @@ class _GameDetailState extends State<_GameDetail> {
     final files = <File>[];
     final updateFiles = <File>[];
     final dlcFiles = <File>[];
-    for (final e in game.listSync(followLinks: false)) {
-      if (e is File) files.add(e);
+    final exists = game.existsSync();
+    if (exists) {
+      for (final e in game.listSync(followLinks: false)) {
+        if (e is File) files.add(e);
+      }
     }
     final updateDir = Directory(p.join(game.path, 'update'));
     if (updateDir.existsSync()) {
@@ -673,7 +696,7 @@ class _GameDetailState extends State<_GameDetail> {
                 title: Text(p.basename(f.path)),
               ),
           ],
-          if (files.isEmpty && updateFiles.isEmpty && dlcFiles.isEmpty)
+          if (!_dirHasAnyFileRecursive(game))
             Padding(
               padding: const EdgeInsets.all(24),
               child: Column(
@@ -699,13 +722,23 @@ class _GameDetailState extends State<_GameDetail> {
                       final messenger = ScaffoldMessenger.of(context);
                       final navigator = Navigator.of(context);
                       try {
+                        if (_dirHasAnyFileRecursive(game)) {
+                          messenger.showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Folder now contains files — not removing.',
+                              ),
+                            ),
+                          );
+                          return;
+                        }
                         game.deleteSync(recursive: true);
                         await TagDb().deleteSetting('cover:${game.path}');
                         await TagDb().deleteTitleId(game.path);
                         messenger.showSnackBar(
                           const SnackBar(content: Text('Empty folder removed.')),
                         );
-                        navigator.pop();
+                        navigator.pop(true);
                       } catch (e) {
                         messenger.showSnackBar(
                           SnackBar(content: Text('Could not remove: $e')),

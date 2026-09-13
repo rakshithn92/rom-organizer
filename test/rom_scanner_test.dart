@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:rom_organizer/services/rom_scanner.dart';
 
 void main() {
@@ -55,11 +56,19 @@ void main() {
   });
 
   test('baseName strips the extension, sizeLabel formats GB', () {
-    write('Zelda.nsp', size: 3 * 1024 * 1024 * 1024); // 3 GB
+    write('Zelda.nsp');
     final roms = RomScanner().scan(tmp);
     final r = roms.single;
     expect(r.baseName, 'Zelda');
-    expect(r.sizeLabel, '3.0 GB');
+    final big = RomFile(
+      path: r.path,
+      name: r.name,
+      baseName: r.baseName,
+      extension: r.extension,
+      sizeBytes: 3 * 1024 * 1024 * 1024, // 3 GB, no giant file needed
+      modified: r.modified,
+    );
+    expect(big.sizeLabel, '3.0 GB');
   });
 
   test('scan of a missing directory returns empty', () {
@@ -105,7 +114,7 @@ void main() {
       '0100C1B00A3A8800',
     );
 
-    expect(found, game.path);
+    expect(p.equals(found!, game.path), isTrue);
   });
 
   test('does not treat an update misplaced at the root as a base game', () {

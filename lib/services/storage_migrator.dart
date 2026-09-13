@@ -86,8 +86,12 @@ class StorageMigrator {
           continue;
         }
         try {
+          final conflictsBefore = conflicts.length;
           moved += _mergeDirectory(sourceDir, Directory(destination), conflicts);
-          if (migrateMetadata != null) {
+          // If this source left conflicting files behind, its old path still
+          // legitimately holds data — rewriting its metadata prefix would
+          // repoint those keys at files that never moved.
+          if (migrateMetadata != null && conflicts.length == conflictsBefore) {
             await migrateMetadata!(source, destination);
           }
           _deleteEmptyTree(sourceDir);
@@ -100,7 +104,9 @@ class StorageMigrator {
     await migrateRoots(legacyLibraryRoots, libraryRoot);
     await migrateRoots(legacyContentRoots, contentRoot);
 
-    if (errors.isEmpty) {
+    // Only mark complete when nothing was left unresolved — otherwise a later
+    // launch must retry the conflicting items.
+    if (errors.isEmpty && conflicts.isEmpty) {
       try {
         File(_markerPath).writeAsStringSync('completed\n', flush: true);
       } catch (e) {

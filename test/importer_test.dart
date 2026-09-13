@@ -111,6 +111,27 @@ void main() {
       );
     });
 
+    test(
+        'fullyExtracted is false and existing file is kept when a basename collides',
+        () async {
+      // Game folder already holds a DIFFERENT Game.nsp.
+      Directory('$root/My Game').createSync(recursive: true);
+      File('$root/My Game/Game.nsp').writeAsBytesSync([9]);
+
+      // Archive's own Game.nsp has different content and must not overwrite it.
+      final zipPath = '${tmp.path}/game.zip';
+      File(zipPath).writeAsBytesSync(makeZip({'Game.nsp': 'newbase'}));
+
+      final result = await Importer(root).importArchive(zipPath, 'My Game');
+
+      expect(result.error, isNull);
+      // Its bytes were never written, so extraction cannot be certified —
+      // the caller must NOT delete the source archive.
+      expect(result.fullyExtracted, isFalse);
+      // The pre-existing ROM is untouched (never overwrite).
+      expect(File('$root/My Game/Game.nsp').readAsBytesSync(), [9]);
+    });
+
     test('reports the base title ID discovered inside an archive', () async {
       final zipPath = '${tmp.path}/game-with-id.zip';
       File(zipPath).writeAsBytesSync(makeZip({
@@ -407,6 +428,57 @@ void main() {
       );
     });
 
+    test('deleteOldUpdates groups differently-named updates of the same game',
+        () async {
+      Directory('$root/My Game/update').createSync(recursive: true);
+      File('$root/My Game/update/Game Update v1.6.0.nsp').writeAsBytesSync([1]);
+      File('$root/My Game/update/Game v1.5.0.nsp').writeAsBytesSync([2]);
+
+      final deleted = Importer(root).deleteOldUpdates('$root/My Game');
+
+      expect(deleted, 1);
+      expect(
+        File('$root/My Game/update/Game Update v1.6.0.nsp').existsSync(),
+        isTrue,
+      );
+      expect(
+        File('$root/My Game/update/Game v1.5.0.nsp').existsSync(),
+        isFalse,
+      );
+    });
+
+    test('deleteOldUpdates leaves a single update file alone', () async {
+      Directory('$root/My Game/update').createSync(recursive: true);
+      File('$root/My Game/update/Game Update v1.6.0.nsp').writeAsBytesSync([1]);
+
+      final deleted = Importer(root).deleteOldUpdates('$root/My Game');
+
+      expect(deleted, 0);
+      expect(
+        File('$root/My Game/update/Game Update v1.6.0.nsp').existsSync(),
+        isTrue,
+      );
+    });
+
+    test('deleteOldUpdates never deletes an unparseable version', () async {
+      Directory('$root/My Game/update').createSync(recursive: true);
+      File('$root/My Game/update/Game Update v1.6.0.nsp').writeAsBytesSync([1]);
+      File('$root/My Game/update/Game Update v1.7.0.nsp').writeAsBytesSync([2]);
+      File('$root/My Game/update/Game Update.nsp').writeAsBytesSync([3]);
+
+      final deleted = Importer(root).deleteOldUpdates('$root/My Game');
+
+      expect(deleted, 1);
+      expect(
+        File('$root/My Game/update/Game Update v1.7.0.nsp').existsSync(),
+        isTrue,
+      );
+      expect(
+        File('$root/My Game/update/Game Update.nsp').existsSync(),
+        isTrue,
+      );
+    });
+
     test('findMissingUpdates flags games with base but no update', () async {
       Directory('$root/Game A').createSync(recursive: true);
       File('$root/Game A/Game.nsp').writeAsBytesSync([1]);
@@ -419,6 +491,39 @@ void main() {
 
       expect(missing.length, 1);
       expect(missing.single, endsWith('Game A'));
+    });
+
+    test('findMissingUpdates ignores folders with no Switch ROM base',
+        () async {
+      // A folder holding only cover art / a readme is not a game missing its
+      // update.
+      Directory('$root/Cover Only').createSync(recursive: true);
+      File('$root/Cover Only/cover.jpg').writeAsBytesSync([1]);
+      File('$root/Cover Only/readme.txt').writeAsBytesSync([2]);
+
+      final missing = Importer(root).findMissingUpdates();
+
+      expect(missing, isEmpty);
+    });
+
+    test('mergeGames skips a failed move and keeps the source file', () async {
+      Directory('$root/My Game').createSync(recursive: true);
+      // A directory named like the source file makes the move throw (a file
+      // cannot be renamed/copied onto a directory).
+      Directory('$root/My Game/blocked.nsp').createSync(recursive: true);
+
+      Directory('$root/Dupe').createSync(recursive: true);
+      File('$root/Dupe/blocked.nsp').writeAsBytesSync([1]);
+      File('$root/Dupe/ok.nsp').writeAsBytesSync([2]);
+
+      final moved = Importer(root).mergeGames('$root/My Game', ['$root/Dupe']);
+
+      // The good file moved; the blocked one was skipped and left behind.
+      expect(moved, 1);
+      expect(File('$root/My Game/ok.nsp').existsSync(), isTrue);
+      expect(File('$root/Dupe/blocked.nsp').existsSync(), isTrue);
+      // Source not deleted because a file still lives in it.
+      expect(Directory('$root/Dupe').existsSync(), isTrue);
     });
   });
 }

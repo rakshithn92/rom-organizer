@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:rom_organizer/services/safe_paths.dart';
 
 void main() {
@@ -6,7 +7,7 @@ void main() {
     test('joins a normal game title below the library root', () {
       expect(
         SafePaths.gameFolder('/library', 'The Legend of Zelda'),
-        '/library/The Legend of Zelda',
+        p.normalize(p.absolute(p.join('/library', 'The Legend of Zelda'))),
       );
     });
 

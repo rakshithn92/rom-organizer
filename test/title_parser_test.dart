@@ -46,4 +46,37 @@ void main() {
     expect(TitleParser.isUpdateTitleId('0100C1B00A3A8000'), isFalse);
     expect(TitleParser.isUpdateTitleId('not-a-title-id-800'), isFalse);
   });
+
+  test('canonicalizes DLC add-on IDs to the base game (M9)', () {
+    // Base stays base.
+    expect(
+      TitleParser.canonicalBaseTitleId('0100C1B00A3A8000'),
+      '0100C1B00A3A8000',
+    );
+    // Update folds to base.
+    expect(
+      TitleParser.canonicalBaseTitleId('0100C1B00A3A8800'),
+      '0100C1B00A3A8000',
+    );
+    // DLC add-on index folds to base.
+    expect(
+      TitleParser.canonicalBaseTitleId('0100C1B00A3A8001'),
+      '0100C1B00A3A8000',
+    );
+  });
+
+  test('DLC add-on ID is not an update but canonicalizes to base', () {
+    expect(TitleParser.isUpdateTitleId('0100C1B00A3A8001'), isFalse);
+    expect(
+      TitleParser.canonicalBaseTitleId('0100C1B00A3A8001'),
+      TitleParser.canonicalBaseTitleId('0100C1B00A3A8000'),
+    );
+  });
+
+  test('leaves a non-title-id token unchanged', () {
+    expect(TitleParser.canonicalBaseTitleId('not-a-title-id-800'),
+        'NOT-A-TITLE-ID-800');
+    expect(TitleParser.canonicalBaseTitleId('0100C1B00A3A8000AB'),
+        '0100C1B00A3A8000AB');
+  });
 }

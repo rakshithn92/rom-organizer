@@ -103,7 +103,14 @@ class TagDb {
   /// Returns the folder path that has [titleId] stored, or null.
   Future<String?> folderForTitleId(String titleId) async {
     final db = await _database;
-    final rows = await db.query('settings', where: "key LIKE 'titleid:%'");
+    // ORDER BY makes the first matching row deterministic (callers may return
+    // to this folder path repeatedly). TagDb stays storage-only; existence
+    // checks belong to the caller.
+    final rows = await db.query(
+      'settings',
+      where: "key LIKE 'titleid:%'",
+      orderBy: 'key ASC',
+    );
     final wanted = TitleParser.canonicalBaseTitleId(titleId);
     for (final r in rows) {
       // Normalize both sides so databases created by older app versions, which

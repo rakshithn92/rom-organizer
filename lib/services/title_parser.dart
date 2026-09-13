@@ -50,18 +50,28 @@ class TitleParser {
     return m?.group(0)?.toUpperCase();
   }
 
-  /// Returns the base-application ID used to match a game and its update.
+  /// Returns the base-application ID used to match a game with its update or
+  /// DLC add-ons.
   ///
-  /// Switch update title IDs use the base game's ID with the final three hex
-  /// digits changed from `000` to `800`. Persisting and comparing the
-  /// normalized `...000` form lets an update downloaded later find a base game
-  /// that was previously imported as a loose file or from an archive.
+  /// Switch title-ID convention for a 16-hex `0100…` ID:
+  ///   - base application ID ends in `000`;
+  ///   - update ID ends in `800`;
+  ///   - DLC add-on IDs share the base ID with the last three hex digits set
+  ///     to a small non-zero add-on index (`001`, `002`, …).
+  ///
+  /// Persisting and comparing the normalized `...000` form lets an update or
+  /// DLC downloaded later find a base game that was previously imported as a
+  /// loose file or from an archive. IDs that are not well-formed `0100…`
+  /// tokens are returned unchanged, so an unrelated token is never rewritten.
+  ///
+  /// ponytail: heuristic — every non-`000` variant of a valid 0100 ID is folded
+  /// into its base. If a title ever legitimately carries a `801`–`FFF` suffix
+  /// that is not a variant, narrow this to the known add-on index range.
   static String canonicalBaseTitleId(String titleId) {
     final normalized = titleId.toUpperCase();
-    if (isUpdateTitleId(normalized)) {
-      return '${normalized.substring(0, normalized.length - 3)}000';
-    }
-    return normalized;
+    final match = _titleId.firstMatch(normalized);
+    if (match?.group(0) != normalized) return normalized;
+    return '${normalized.substring(0, normalized.length - 3)}000';
   }
 
   /// Whether [titleId] identifies an update rather than a base application.

@@ -22,9 +22,11 @@ class ZipEntryInfo {
 /// Inspects a zip's contents and classifies each entry as base game, update,
 /// or DLC based on filename markers and folder structure.
 class ZipClassifier {
-  static const _updateMarkers = [
-    'update', 'upd', 'patch', 'v1.', 'v2.', 'v3.', 'v4.', 'v5.',
-  ];
+  // Word markers only. Version numbers like "v1." / "v6." are NOT markers:
+  // a base ROM may legitimately carry a version suffix, and an update may use
+  // a version the list never anticipated. An update Title ID (…800, handled in
+  // classifyPath) remains the authoritative signal.
+  static const _updateMarkers = ['update', 'upd', 'patch'];
   static const _dlcMarkers = ['dlc', 'addon', 'add-on', 'expansion'];
 
   /// Lists and classifies the entries of [zipBytes] (a decoded zip archive).

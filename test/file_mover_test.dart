@@ -35,6 +35,26 @@ void main() {
     expect(File(destination).readAsBytesSync(), [1, 2, 3]);
   });
 
+  test('a failed move leaves the source intact and no destination file', () {
+    final source = File('${temporaryDirectory.path}/source.nsp')
+      ..writeAsBytesSync([1, 2, 3]);
+    // A regular file in the destination's parent slot makes both renameSync and
+    // the copy fallback fail, without a partial copy to clean up (failure
+    // injection mid-copy is not deterministically reproducible here).
+    final blocker = File('${temporaryDirectory.path}/blocker.nsp')
+      ..writeAsBytesSync([9]);
+    final destination = '${blocker.path}/child.nsp';
+
+    expect(
+      () => FileMover.moveFile(source.path, destination),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(source.existsSync(), isTrue);
+    expect(source.readAsBytesSync(), [1, 2, 3]);
+    expect(File(destination).existsSync(), isFalse);
+    expect(blocker.readAsBytesSync(), [9]);
+  });
+
   test('moves a directory recursively', () {
     final source = Directory('${temporaryDirectory.path}/source')..createSync();
     final nested = Directory('${source.path}/update')..createSync();

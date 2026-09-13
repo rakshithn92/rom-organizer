@@ -86,4 +86,52 @@ void main() {
     expect(second.alreadyCompleted, isTrue);
     expect(second.movedFiles, 0);
   });
+
+  test('does not mark complete while a conflict is left behind', () async {
+    final oldRoms = Directory(p.join(temporaryDirectory.path, 'old'))
+      ..createSync(recursive: true);
+    Directory(library).createSync(recursive: true);
+    File(p.join(oldRoms.path, 'same.nsp')).writeAsStringSync('old');
+    File(p.join(library, 'same.nsp')).writeAsStringSync('new');
+    final migrator = StorageMigrator(
+      libraryRoot: library,
+      contentRoot: content,
+      legacyLibraryRoots: [oldRoms.path],
+      legacyContentRoots: const [],
+    );
+
+    final first = await migrator.run();
+    expect(first.conflicts, hasLength(1));
+    expect(first.alreadyCompleted, isFalse);
+    expect(File(p.join(content, '.downloads_migration_v1')).existsSync(), isFalse);
+
+    // A retry still sees the unresolved conflict (nothing was lost).
+    final second = await migrator.run();
+    expect(second.alreadyCompleted, isFalse);
+    expect(second.conflicts, hasLength(1));
+    expect(File(p.join(library, 'same.nsp')).readAsStringSync(), 'new');
+    expect(File(p.join(oldRoms.path, 'same.nsp')).readAsStringSync(), 'old');
+  });
+
+  test('skips the metadata rewrite for a source that left a conflict',
+      () async {
+    final oldRoms = Directory(p.join(temporaryDirectory.path, 'old'))
+      ..createSync(recursive: true);
+    Directory(library).createSync(recursive: true);
+    File(p.join(oldRoms.path, 'same.nsp')).writeAsStringSync('old');
+    File(p.join(library, 'same.nsp')).writeAsStringSync('new');
+    final rewrites = <String>[];
+
+    await StorageMigrator(
+      libraryRoot: library,
+      contentRoot: content,
+      legacyLibraryRoots: [oldRoms.path],
+      legacyContentRoots: const [],
+      migrateMetadata: (from, to) async {
+        rewrites.add('$from->$to');
+      },
+    ).run();
+
+    expect(rewrites, isEmpty);
+  });
 }

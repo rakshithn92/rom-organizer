@@ -201,12 +201,16 @@ class _ImportScreenState extends State<ImportScreen> {
       }
 
       final importer = Importer(AppPaths.libraryRoot);
-      for (final path in files) {
+
+      // Imports one file, updating the counters. Returns true when the file was
+      // refused only because its base game had not been imported yet — the
+      // caller defers those to a second pass.
+      Future<bool> process(String path) async {
         final ext = p.extension(path).toLowerCase();
         // 7z/rar can't be decoded in-app — skip them (user extracts via built-in).
         if (ext == '.7z' || ext == '.rar') {
           skipped++;
-          continue;
+          return false;
         }
         final isArchive = SupportedFormats.archives.contains(ext);
         final title = await _resolveTitle(TitleParser.clean(p.basename(path)));
@@ -232,7 +236,32 @@ class _ImportScreenState extends State<ImportScreen> {
               // Non-fatal — leave the archive.
             }
           }
-        } else {
+          return false;
+        }
+        if (result.error!.contains('Import the base game first')) {
+          // The base may appear later in this same batch — don't count it yet.
+          return true;
+        }
+        skipped++;
+        return false;
+      }
+
+      // An update/DLC processed before its base is refused, so retry the refused
+      // entries once after the first pass has imported their base. Bounded: a
+      // second refusal counts as skipped.
+      final deferred = <String>[];
+      for (final path in files) {
+        // One bad file must not abort the whole batch (it would skip _load()).
+        try {
+          if (await process(path)) deferred.add(path);
+        } catch (_) {
+          skipped++;
+        }
+      }
+      for (final path in deferred) {
+        try {
+          if (await process(path)) skipped++;
+        } catch (_) {
           skipped++;
         }
       }

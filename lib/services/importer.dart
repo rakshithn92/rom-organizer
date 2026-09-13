@@ -39,7 +39,7 @@ class Importer {
   /// Sanitizes a folder name for use as a filesystem path. Android's dart:io
   /// fails with EPERM on file operations when a path contains a colon (or other
   /// reserved chars), so replace them with a safe separator.
-  static String _sanitizeFolderName(String name) {
+  static String sanitizeFolderName(String name) {
     return name
         .replaceAll(RegExp(r'[:/\\*?"<>|]'), ' - ')
         .replaceAll(RegExp(r'\s+'), ' ')
@@ -56,7 +56,7 @@ class Importer {
     // Validate (throws on slashes/control chars) — keeps the title from
     // escaping the library root.
     SafePaths.gameFolderName(gameTitle);
-    final safeTitle = _sanitizeFolderName(gameTitle);
+    final safeTitle = sanitizeFolderName(gameTitle);
     final root = Directory(libraryRoot);
     if (root.existsSync()) {
       final dirs = root
@@ -68,7 +68,7 @@ class Importer {
       // created with a colon still matches a title that has one).
       final sanitizedTitle = safeTitle.toLowerCase();
       for (final e in dirs) {
-        if (_sanitizeFolderName(e.path.split('/').last).toLowerCase() ==
+        if (sanitizeFolderName(e.path.split('/').last).toLowerCase() ==
             sanitizedTitle) {
           return e.path;
         }
@@ -142,6 +142,7 @@ class Importer {
       final dlcDir = p.join(gameFolder, 'dlc');
 
       var base = 0, upd = 0, dlc = 0;
+      final skipped = <String>{};
       for (final f in romEntries) {
         final kind = ZipClassifier.classifyPath(f.name);
         if (kind == RomEntryKind.base) {
@@ -161,6 +162,10 @@ class Importer {
         // entries in different subfolders both named update.nsp) would
         // otherwise silently destroy the first one.
         if (File(dest).existsSync()) {
+          // A same-named file already existed, so THIS archive entry was not
+          // written. Its bytes are not on disk — an exists-only check would be
+          // fooled by the pre-existing file and wrongly certify extraction.
+          skipped.add(f.name);
           continue;
         }
         File(dest).writeAsBytesSync(f.content);
@@ -174,7 +179,7 @@ class Importer {
         }
       }
 
-      final fully = _verify(romEntries, gameFolder);
+      final fully = skipped.isEmpty && _verify(romEntries, gameFolder);
       return ImportResult(
         gameFolder: gameFolder,
         baseFiles: base,
@@ -362,11 +367,14 @@ class Importer {
       if (v == null) continue; // never touch unparseable files
       // Normalize the base name: strip the version, then any trailing
       // separator (dot/underscore/space) so "Game.Update.v1.6.0" and
-      // "Game.v1.6.0" group together.
+      // "Game.v1.6.0" group together. Also strip a trailing update marker so
+      // "Game Update v1.6.0" and "Game v1.5.0" group together (DLC is not
+      // stripped — it lives in a different folder and would over-merge).
       final base = p
           .basenameWithoutExtension(f.path)
           .replaceAll(RegExp(r'v\d+(\.\d+)*', caseSensitive: false), '')
           .replaceAll(RegExp(r'[._\s]+$'), '')
+          .replaceAll(RegExp(r'[._\s]*(update|upd|patch)$', caseSensitive: false), '')
           .trim();
       byBase.putIfAbsent(base, () => []).add(f);
     }
@@ -397,7 +405,12 @@ class Importer {
     final missing = <String>[];
     for (final e in root.listSync(followLinks: false)) {
       if (e is Directory) {
-        final hasBase = e.listSync(followLinks: false).any((f) => f is File);
+        // Only a Switch ROM counts as a base — a folder holding just a
+        // cover.jpg/readme.txt is not a game missing its update.
+        final hasBase = e.listSync(followLinks: false).any(
+              (f) =>
+                  f is File && SupportedFormats.switchRoms.contains(_ext(f.path)),
+            );
         final hasUpdate = Directory(p.join(e.path, 'update')).existsSync();
         if (hasBase && !hasUpdate) missing.add(e.path);
       }
@@ -408,8 +421,11 @@ class Importer {
   /// Merges [sourceFolders] into [targetFolder], moving every file into the
   /// target's layout (base -> root, update/ -> update/, dlc/ -> dlc/), then
   /// deletes the now-empty source folders. Returns the number of files moved.
-  /// Used to clean up duplicate game folders (e.g. an English and a Japanese
-  /// copy of the same game, or a base/update split across two folders).
+  /// A file whose move throws is skipped and left in the source (so the
+  /// empty-folder check below never deletes it); the merge continues with the
+  /// rest. Used to clean up duplicate game folders (e.g. an English and a
+  /// Japanese copy of the same game, or a base/update split across two
+  /// folders).
   int mergeGames(String targetFolder, List<String> sourceFolders) {
     var moved = 0;
     for (final src in sourceFolders) {
@@ -420,8 +436,12 @@ class Importer {
         if (e is File) {
           final dest = p.join(targetFolder, p.basename(e.path));
           if (!File(dest).existsSync()) {
-            FileMover.moveFile(e.path, dest);
-            moved++;
+            try {
+              FileMover.moveFile(e.path, dest);
+              moved++;
+            } catch (_) {
+              // Leave the file in the source; skip it and keep going.
+            }
           }
         } else if (e is Directory) {
           final sub = p.basename(e.path);
@@ -432,8 +452,12 @@ class Importer {
               if (f is File) {
                 final dest = p.join(destDir, p.basename(f.path));
                 if (!File(dest).existsSync()) {
-                  FileMover.moveFile(f.path, dest);
-                  moved++;
+                  try {
+                    FileMover.moveFile(f.path, dest);
+                    moved++;
+                  } catch (_) {
+                    // Leave the file in the source; skip it and keep going.
+                  }
                 }
               }
             }
