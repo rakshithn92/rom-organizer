@@ -9,8 +9,8 @@ void main() {
     });
 
     test('parses bracketed [vN] title-id style', () {
-      expect(VersionParser.parse('Game[0100...][v0].nsp')?.toString(), '0.0.0');
-      expect(VersionParser.parse('Game[0100...][v5].nsp')?.toString(), '5.0.0');
+      expect(VersionParser.parse('Game[0100...][v0].nsp')?.toString(), '0');
+      expect(VersionParser.parse('Game[0100...][v5].nsp')?.toString(), '5');
     });
 
     test('parses underscore-separated versions', () {
@@ -29,6 +29,33 @@ void main() {
           greaterThan(0));
       expect(Version.fromString('1.2.3').compareTo(Version.fromString('1.2.3')),
           0);
+    });
+
+    test('4-component versions compare beyond three parts', () {
+      expect(
+        Version.fromString('1.2.3.1').compareTo(Version.fromString('1.2.3.2')),
+        lessThan(0),
+      );
+      expect(
+        Version.fromString('1.2.3.1').compareTo(Version.fromString('1.2.3.1')),
+        0,
+      );
+    });
+
+    test('1.6 equals 1.6.0 (zero padding)', () {
+      final a = Version.fromString('1.6');
+      final b = Version.fromString('1.6.0');
+      expect(a.compareTo(b), 0);
+      expect(a == b, isTrue);
+      expect(a.compareTo(Version.fromString('1.6.1')), lessThan(0));
+    });
+
+    test('== and hashCode agree', () {
+      expect(Version.fromString('1.2.0'), equals(Version.fromString('1.2.0')));
+      expect(
+        Version.fromString('1.2.0').hashCode,
+        Version.fromString('1.2.0').hashCode,
+      );
     });
   });
 }

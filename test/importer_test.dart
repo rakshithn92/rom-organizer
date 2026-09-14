@@ -525,5 +525,188 @@ void main() {
       // Source not deleted because a file still lives in it.
       expect(Directory('$root/Dupe').existsSync(), isTrue);
     });
+
+    test('rejects a corrupt zip entry (CRC mismatch) and keeps the archive',
+        () async {
+      // Build a zip with compressed content, then flip a byte in the middle
+      // of the file (inside the deflate stream). Streaming extraction must
+      // detect the CRC mismatch instead of writing corrupt ROM bytes.
+      final archive = Archive()
+        ..addFile(ArchiveFile(
+            'Game.nsp', 4000, List.generate(4000, (i) => i % 251)));
+      final bytes =
+          Uint8List.fromList(ZipEncoder().encodeBytes(archive));
+      bytes[bytes.length ~/ 2] ^= 0xFF;
+      final zipPath = '${tmp.path}/corrupt.zip';
+      File(zipPath).writeAsBytesSync(bytes);
+
+      final result = await Importer(root).importArchive(zipPath, 'My Game');
+
+      expect(result.error, isNotNull);
+      expect(result.error, contains('corrupt'));
+      // The corrupt entry must not land in the library (the game folder may
+      // be created, but no ROM file is ever written from the corrupt zip).
+      expect(File('$root/My Game/Game.nsp').existsSync(), isFalse);
+      expect(File('$root/My Game/Game.nsp.import-tmp').existsSync(), isFalse);
+    });
+
+    test('rejects a corrupt gzipped tar (container checksum)', () async {
+      final tarArchive = Archive()
+        ..addFile(ArchiveFile('Game.nsp', 4, 'base'.codeUnits));
+      final tarBytes = TarEncoder().encode(tarArchive);
+      final bytes = Uint8List.fromList(GZipEncoder().encode(tarBytes));
+      // Corrupt the middle of the deflate stream.
+      bytes[bytes.length ~/ 2] ^= 0xFF;
+      final badPath = '${tmp.path}/bad.tar.gz';
+      File(badPath).writeAsBytesSync(bytes);
+
+      final result = await Importer(root).importArchive(badPath, 'My Game');
+      expect(result.error, isNotNull);
+      expect(Directory('$root/My Game').existsSync(), isFalse);
+    });
+
+    test('a truncated write never reaches the final filename', () async {
+      // The tmp-then-rename write path means a mid-write crash leaves an
+      // 'import-tmp' file, never the final name — so verification (and the
+      // caller's archive deletion) cannot be fooled by a partial file.
+      final zipPath = '${tmp.path}/game.zip';
+      File(zipPath).writeAsBytesSync(makeZip({'Game.nsp': 'base'}));
+      await Importer(root).importArchive(zipPath, 'My Game');
+      // After a successful import, no tmp leftovers.
+      expect(
+        Directory(root)
+            .listSync(recursive: true)
+            .where((e) => e.path.contains('import-tmp')),
+        isEmpty,
+      );
+      // And the final file has the full content.
+      expect(
+        File('$root/My Game/Game.nsp').readAsStringSync(),
+        'base',
+      );
+    });
+
+    test('truncated extraction does not certify fullyExtracted (size check)',
+        () async {
+      // Simulate a crash mid-extraction: the entry file exists on disk but
+      // is short. _verify must fail, so the caller never deletes the archive.
+      final zipPath = '${tmp.path}/game.zip';
+      File(zipPath).writeAsBytesSync(makeZip({'Game.nsp': 'base'}));
+      final gameFolder = '$root/My Game';
+      Directory(gameFolder).createSync(recursive: true);
+      File('$gameFolder/Game.nsp').writeAsBytesSync([98, 97]);
+
+      final recheck =
+          await Importer(root).verifyExtracted(zipPath, gameFolder);
+      expect(recheck, isFalse);
+    });
+    test('extracts a gzipped tar via streaming (container verify)', () async {
+      final tarArchive = Archive()
+        ..addFile(ArchiveFile('Game.nsp', 4, 'base'.codeUnits));
+      final tarBytes = TarEncoder().encode(tarArchive);
+      final gzPath = '${tmp.path}/game.tar.gz';
+      File(gzPath).writeAsBytesSync(GZipEncoder().encode(tarBytes));
+
+      final result = await Importer(root).importArchive(gzPath, 'My Game');
+      expect(result.error, isNull);
+      expect(result.baseFiles, 1);
+      expect(File('$root/My Game/Game.nsp').readAsStringSync(), 'base');
+      // The decompressed tar temp file must be cleaned up.
+      expect(File('$gzPath.extract-tmp').existsSync(), isFalse);
+    });
+
+    test('rejects a corrupt gzipped tar (container checksum)', () async {
+      final tarArchive = Archive()
+        ..addFile(ArchiveFile('Game.nsp', 4, 'base'.codeUnits));
+      final tarBytes = TarEncoder().encode(tarArchive);
+      final gzBytes = GZipEncoder().encode(tarBytes);
+      gzPath() => '${tmp.path}/bad.tar.gz';
+      final bytes = Uint8List.fromList(gzBytes);
+      // Corrupt the middle of the deflate stream.
+      bytes[bytes.length ~/ 2] ^= 0xFF;
+      final badPath = '${tmp.path}/bad.tar.gz';
+      File(badPath).writeAsBytesSync(bytes);
+
+      final result = await Importer(root).importArchive(badPath, 'My Game');
+      expect(result.error, isNotNull);
+      expect(Directory('$root/My Game').existsSync(), isFalse);
+      gzPath;
+    });
+
+    test('extracts an xz-compressed tar via streaming', () async {
+      final tarArchive = Archive()
+        ..addFile(ArchiveFile('Game.nsp', 4, 'base'.codeUnits));
+      final xzPath = '${tmp.path}/game.tar.xz';
+      File(xzPath)
+          .writeAsBytesSync(XZEncoder().encode(TarEncoder().encode(tarArchive)));
+
+      final result = await Importer(root).importArchive(xzPath, 'My Game');
+      expect(result.error, isNull);
+      expect(result.baseFiles, 1);
+      expect(File('$root/My Game/Game.nsp').readAsStringSync(), 'base');
+    });
+
+    test('rejects a corrupt xz-compressed tar (empty temp tar)', () async {
+      // XZDecoder's bool return is unreliable in archive 4.2.0 (it returns
+      // false even on a clean decode), so the container checksum never
+      // surfaces as an error. A flip inside the *compressed payload* can still
+      // decode to a byte-identical-length tar, so corruption has to land in
+      // the block header: that aborts the decode with zero bytes written,
+      // leaving an empty temp tar which the tar parse (or the emptiness check)
+      // must reject rather than importing garbage.
+      final tarArchive = Archive()
+        ..addFile(ArchiveFile('Game.nsp', 4, 'base'.codeUnits)
+          ..lastModTime = 1700000000);
+      final tarBytes = TarEncoder().encode(tarArchive);
+      final xzBytes =
+          Uint8List.fromList(XZEncoder().encodeBytes(tarBytes, check: XZCheck.crc32));
+      // Byte 16 is inside the xz block header (after the 12-byte stream
+      // header), so the block fails to decode and nothing is written.
+      xzBytes[16] ^= 0xFF;
+      final badPath = '${tmp.path}/bad.tar.xz';
+      File(badPath).writeAsBytesSync(xzBytes);
+
+      final result = await Importer(root).importArchive(badPath, 'My Game');
+
+      expect(result.error, isNotNull);
+      // The empty temp tar must never become a ROM file in the library.
+      expect(File('$root/My Game/Game.nsp').existsSync(), isFalse);
+    });
+
+    test('extracts a bz2-compressed tar via streaming', () async {
+      final tarArchive = Archive()
+        ..addFile(ArchiveFile('Game.nsp', 4, 'base'.codeUnits)
+          ..lastModTime = 1700000000);
+      final tarBytes = TarEncoder().encode(tarArchive);
+      final bz2Path = '${tmp.path}/game.tar.bz2';
+      File(bz2Path).writeAsBytesSync(BZip2Encoder().encodeBytes(tarBytes));
+
+      final result = await Importer(root).importArchive(bz2Path, 'My Game');
+      expect(result.error, isNull);
+      expect(result.baseFiles, 1);
+      expect(File('$root/My Game/Game.nsp').readAsStringSync(), 'base');
+      // The decompressed tar temp file must be cleaned up.
+      expect(File('$bz2Path.extract-tmp').existsSync(), isFalse);
+    });
+
+    test('streams a multi-megabyte entry without loading it whole', () async {
+      // 8 MB of content: if the implementation still decoded the archive in
+      // RAM this would not fail, but it proves the streaming path handles
+      // entries spanning many chunks end-to-end (size + CRC checks included).
+      final big = List.generate(8 * 1024 * 1024, (i) => i % 251);
+      final archive = Archive()
+        ..addFile(ArchiveFile('Big.nsp', big.length, big));
+      final zipPath = '${tmp.path}/big.zip';
+      File(zipPath).writeAsBytesSync(ZipEncoder().encodeBytes(archive));
+
+      final result = await Importer(root).importArchive(zipPath, 'Big Game');
+      expect(result.error, isNull);
+      expect(result.baseFiles, 1);
+      expect(
+        File('$root/Big Game/Big.nsp').lengthSync(),
+        8 * 1024 * 1024,
+      );
+      expect(result.fullyExtracted, isTrue);
+    });
   });
 }

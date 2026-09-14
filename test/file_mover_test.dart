@@ -66,4 +66,45 @@ void main() {
     expect(source.existsSync(), isFalse);
     expect(File('$destination/update/update.nsp').existsSync(), isTrue);
   });
+
+  test('a held claim rejects a second move', () {
+    final source = File('${temporaryDirectory.path}/source.nsp')
+      ..writeAsBytesSync([1, 2, 3]);
+    final destination = '${temporaryDirectory.path}/destination.nsp';
+    // Simulate a concurrent move that already published its claim.
+    final claim = Directory('$destination.claim')..createSync();
+    File('${claim.path}/held').writeAsBytesSync(const [1]);
+
+    expect(
+      () => FileMover.moveFile(source.path, destination),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(source.existsSync(), isTrue);
+    expect(source.readAsBytesSync(), [1, 2, 3]);
+    expect(File(destination).existsSync(), isFalse);
+
+    claim.deleteSync(recursive: true);
+  });
+
+  test('a stale empty claim directory does not block a new move', () {
+    final source = File('${temporaryDirectory.path}/source.nsp')
+      ..writeAsBytesSync([1, 2, 3]);
+    final destination = '${temporaryDirectory.path}/destination.nsp';
+    // A crashed run leaves an empty claim behind; it is self-healing.
+    Directory('$destination.claim').createSync();
+
+    expect(FileMover.moveFile(source.path, destination), isTrue);
+    expect(source.existsSync(), isFalse);
+    expect(File(destination).readAsBytesSync(), [1, 2, 3]);
+    expect(Directory('$destination.claim').existsSync(), isFalse);
+  });
+
+  test('a successful move releases the claim', () {
+    final source = File('${temporaryDirectory.path}/source.nsp')
+      ..writeAsBytesSync([1, 2, 3]);
+    final destination = '${temporaryDirectory.path}/destination.nsp';
+
+    expect(FileMover.moveFile(source.path, destination), isTrue);
+    expect(Directory('$destination.claim').existsSync(), isFalse);
+  });
 }

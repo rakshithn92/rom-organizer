@@ -30,27 +30,41 @@ class VersionParser {
   }
 }
 
-/// A comparable semantic-ish version (major.minor.patch).
+/// A comparable semantic-ish version. Holds every numeric component found
+/// (`v1.2.3.4` keeps four), because truncating to three made e.g. `v1.2.3.1`
+/// and `v1.2.3.2` compare equal and deleteOldUpdates would then keep an
+/// arbitrary one of the pair.
 class Version implements Comparable<Version> {
-  final int major;
-  final int minor;
-  final int patch;
+  final List<int> components;
 
-  const Version(this.major, this.minor, this.patch);
+  const Version(this.components);
 
-  factory Version.fromString(String s) {
-    final parts = s.split('.');
-    int get(int i) => i < parts.length ? int.tryParse(parts[i]) ?? 0 : 0;
-    return Version(get(0), get(1), get(2));
-  }
+  factory Version.fromString(String s) => Version(
+        s.split('.').map((part) => int.tryParse(part) ?? 0).toList(),
+      );
 
+  /// Pads both component lists to a common length with zeros, so `1.6`
+  /// compares equal to `1.6.0` and less than `1.6.1`.
   @override
   int compareTo(Version other) {
-    if (major != other.major) return major.compareTo(other.major);
-    if (minor != other.minor) return minor.compareTo(other.minor);
-    return patch.compareTo(other.patch);
+    final len = components.length > other.components.length
+        ? components.length
+        : other.components.length;
+    for (var i = 0; i < len; i++) {
+      final a = i < components.length ? components[i] : 0;
+      final b = i < other.components.length ? other.components[i] : 0;
+      if (a != b) return a.compareTo(b);
+    }
+    return 0;
   }
 
   @override
-  String toString() => '$major.$minor.$patch';
+  bool operator ==(Object other) =>
+      other is Version && compareTo(other) == 0;
+
+  @override
+  int get hashCode => Object.hashAll(components);
+
+  @override
+  String toString() => components.join('.');
 }
