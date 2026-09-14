@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../config/app_paths.dart';
 import '../services/file_mover.dart';
+import '../services/import_utils.dart';
 import '../services/importer.dart';
 import '../services/safe_paths.dart';
 import '../services/tag_db.dart';
@@ -191,7 +192,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       // Remove the cover + title-ID cache keys for the merged-away source
       // folders, but first carry a source title-ID onto the target if it has
       // none yet.
-      final db = TagDb();
+      final db = _db;
       String? capturedTitleId;
       for (final s in sources) {
         capturedTitleId ??= await db.titleIdForFolder(s);
@@ -288,7 +289,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         }
         return count;
       });
-      final db = TagDb();
+      final db = _db;
       for (final d in empty) {
         await db.deleteSetting('cover:${d.path}');
         await db.deleteTitleId(d.path);
@@ -543,7 +544,7 @@ class _GameCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasUpdate = Directory(p.join(game.path, 'update')).existsSync();
+    final hasUpdate = Directory(p.join(game.path, kUpdateDir)).existsSync();
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -628,6 +629,8 @@ class _GameDetail extends StatefulWidget {
 }
 
 class _GameDetailState extends State<_GameDetail> {
+  final TagDb _db = TagDb();
+
   late Directory game = widget.game;
   String? _titleId;
 
@@ -638,7 +641,7 @@ class _GameDetailState extends State<_GameDetail> {
   }
 
   Future<void> _loadTitleId() async {
-    final tid = await TagDb().titleIdForFolder(game.path);
+    final tid = await _db.titleIdForFolder(game.path);
     if (mounted) setState(() => _titleId = tid);
   }
 
@@ -684,7 +687,7 @@ class _GameDetailState extends State<_GameDetail> {
         );
       }
       // Move the cover cache key along with the folder.
-      final db = TagDb();
+      final db = _db;
       final cover = await db.getSetting('cover:${game.path}');
       // Move off the UI isolate; cross-volume moves safely fall back to a
       // recursive copy while retaining the source if that copy fails.
@@ -725,13 +728,13 @@ class _GameDetailState extends State<_GameDetail> {
         if (e is File) files.add(e);
       }
     }
-    final updateDir = Directory(p.join(game.path, 'update'));
+    final updateDir = Directory(p.join(game.path, kUpdateDir));
     if (updateDir.existsSync()) {
       for (final e in updateDir.listSync(followLinks: false)) {
         if (e is File) updateFiles.add(e);
       }
     }
-    final dlcDir = Directory(p.join(game.path, 'dlc'));
+    final dlcDir = Directory(p.join(game.path, kDlcDir));
     if (dlcDir.existsSync()) {
       for (final e in dlcDir.listSync(followLinks: false)) {
         if (e is File) dlcFiles.add(e);
@@ -841,7 +844,7 @@ class _GameDetailState extends State<_GameDetail> {
                           );
                           return;
                         }
-                        final db = TagDb();
+                        final db = _db;
                         await db.deleteSetting('cover:$path');
                         await db.deleteTitleId(path);
                         messenger.showSnackBar(

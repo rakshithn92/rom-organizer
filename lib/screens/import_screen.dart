@@ -6,10 +6,9 @@ import 'package:path/path.dart' as p;
 
 import '../config/app_paths.dart';
 import '../config/supported_formats.dart';
+import '../services/import_coordinator.dart';
 import '../services/importer.dart';
 import '../services/rom_scanner.dart';
-import '../services/tag_db.dart';
-import '../services/thegamesdb_client.dart';
 import '../services/title_parser.dart';
 import '../services/zip_classifier.dart';
 
@@ -24,7 +23,9 @@ class ImportScreen extends StatefulWidget {
 }
 
 class _ImportScreenState extends State<ImportScreen> {
-  final TagDb _db = TagDb();
+  /// Owns title lookup, title-ID matching, and the bulk import workflow.
+  /// The screen keeps only the dialogs and navigation.
+  late final ImportCoordinator _coordinator = ImportCoordinator();
 
   Directory _current = Directory(AppPaths.defaultImportRoot);
   List<Directory> _subdirs = [];
@@ -88,39 +89,15 @@ class _ImportScreenState extends State<ImportScreen> {
 
   /// Resolves the real game title from TheGamesDB (if a key is set), falling
   /// back to the parsed filename candidate.
-  Future<String> _resolveTitle(String candidate) async {
-    final key = await _db.getSetting('thegamesdb_api_key');
-    if (key != null && key.isNotEmpty) {
-      try {
-        final meta = await TheGamesDbClient.searchOnce(key, candidate);
-        if (meta != null && meta.title.isNotEmpty) return meta.title;
-      } catch (_) {
-        // Fall back to the parsed candidate.
-      }
-    }
-    return candidate;
-  }
+  Future<String> _resolveTitle(String candidate) =>
+      _coordinator.resolveTitle(candidate);
 
-  /// Resolves the target game folder for [fileName] by title ID first. Update
-  /// IDs are normalized to their corresponding base-game IDs by [TagDb], so an
-  /// update lands in the base's folder regardless of how their titles differ.
-  /// Returns null if no title ID match is found (caller falls back to
-  /// name-based resolution).
-  Future<String?> _resolveTargetByTitleId(String fileName) async {
-    final id = TitleParser.titleId(fileName);
-    if (id == null) return null;
-    final stored = await _db.folderForTitleId(id);
-    if (stored != null && Directory(stored).existsSync()) return stored;
-
-    // Older app versions did not persist IDs for every import. Inspect the
-    // already-organized base filenames once, then backfill the cache.
-    final discovered = RomScanner().findGameFolderByTitleId(
-      Directory(AppPaths.libraryRoot),
-      id,
-    );
-    if (discovered != null) await _db.saveTitleId(discovered, id);
-    return discovered;
-  }
+  /// Resolves the target game folder for [fileName] by title ID first, falling
+  /// back on a library scan for libraries that predate ID persistence. Returns
+  /// null if no title ID match is found (caller falls back to name-based
+  /// resolution).
+  Future<String?> _resolveTargetByTitleId(String fileName) =>
+      _coordinator.resolveTargetByTitleId(fileName);
 
   Future<String?> _pickExistingGameFolder() async {
     final root = Directory(AppPaths.libraryRoot);
@@ -150,7 +127,7 @@ class _ImportScreenState extends State<ImportScreen> {
     // Show the spinner immediately — the scan below can take seconds on a
     // large folder, and without this the button looks dead during it.
     setState(() => _busy = true);
-    var imported = 0, skipped = 0, warnings = 0;
+    ImportReport report;
     try {
       final currentPath = _current.path;
       final List<String> files;
@@ -212,75 +189,17 @@ class _ImportScreenState extends State<ImportScreen> {
         if (!mounted) return;
       }
 
-      final importer = Importer(AppPaths.libraryRoot);
-
-      // Imports one file, updating the counters. Returns true when the file was
-      // refused only because its base game had not been imported yet — the
-      // caller defers those to a second pass.
-      Future<bool> process(String path) async {
-        final ext = p.extension(path).toLowerCase();
-        // 7z/rar can't be decoded in-app — skip them (user extracts via built-in).
-        if (ext == '.7z' || ext == '.rar') {
-          skipped++;
-          return false;
-        }
-        final isArchive = SupportedFormats.archives.contains(ext);
-        final title = await _resolveTitle(TitleParser.clean(p.basename(path)));
-        // Match by title ID first (update IDs normalize to their base IDs).
-        final target = await _resolveTargetByTitleId(p.basename(path));
-
-        final result = isArchive
-            ? await importer.importArchive(path, title, targetFolder: target)
-            : await importer.importFile(path, title, targetFolder: target);
-        if (result.error == null) {
-          imported++;
-          if (result.warning != null) warnings++;
-          // Store the title ID on the base folder so future updates can match.
-          if (result.baseFiles > 0) {
-            final id = result.titleId ?? TitleParser.titleId(p.basename(path));
-            if (id != null) await _db.saveTitleId(result.gameFolder, id);
-          }
-          // Delete the archive only if the user chose to.
-          if (isArchive && result.fullyExtracted && deleteArchives) {
-            try {
-              File(path).deleteSync();
-            } catch (_) {
-              // Non-fatal — leave the archive.
-            }
-          }
-          return false;
-        }
-        if (result.error!.contains('Import the base game first')) {
-          // The base may appear later in this same batch — don't count it yet.
-          return true;
-        }
-        skipped++;
-        return false;
-      }
-
-      // An update/DLC processed before its base is refused, so retry the refused
-      // entries once after the first pass has imported their base. Bounded: a
-      // second refusal counts as skipped.
-      final deferred = <String>[];
-      for (final path in files) {
-        // One bad file must not abort the whole batch (it would skip _load()).
-        try {
-          if (await process(path)) deferred.add(path);
-        } catch (_) {
-          skipped++;
-        }
-      }
-      for (final path in deferred) {
-        try {
-          if (await process(path)) skipped++;
-        } catch (_) {
-          skipped++;
-        }
-      }
+      report = await _coordinator.importPaths(
+        files,
+        deleteArchives: deleteArchives,
+      );
     } finally {
       // Always clear the busy flag so the button can't get stuck disabled.
       if (mounted) setState(() => _busy = false);
     }
+    final imported = report.imported;
+    final skipped = report.skipped;
+    final warnings = report.warnings;
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -297,8 +216,7 @@ class _ImportScreenState extends State<ImportScreen> {
   Future<void> _import(File file, {required bool isArchive}) async {
     // 7z/rar can't be decoded in-app (no decoder). Guide the user to extract
     // it with Android's built-in extractor, then import the extracted ROM.
-    final ext = p.extension(file.path).toLowerCase();
-    if (isArchive && (ext == '.7z' || ext == '.rar')) {
+    if (isArchive && ImportCoordinator.isUndecodableArchive(file.path)) {
       if (mounted) {
         await showDialog<void>(
           context: context,
@@ -359,7 +277,7 @@ class _ImportScreenState extends State<ImportScreen> {
     //    update IDs normalize to their base IDs so the update lands correctly.
     if (!mounted) return;
     setState(() => _busy = true);
-    final importer = Importer(AppPaths.libraryRoot);
+    final importer = _coordinator.importer;
     ImportResult result;
     try {
       var target = await _resolveTargetByTitleId(p.basename(file.path));
@@ -391,10 +309,7 @@ class _ImportScreenState extends State<ImportScreen> {
     }
 
     // Store the title ID on the base folder so future updates can match.
-    if (result.baseFiles > 0) {
-      final id = result.titleId ?? TitleParser.titleId(p.basename(file.path));
-      if (id != null) await _db.saveTitleId(result.gameFolder, id);
-    }
+    await _coordinator.saveTitleIdFor(result, p.basename(file.path));
     if (!mounted) return;
 
     // 5. For archives only: if fully extracted, offer to delete the archive to
@@ -491,7 +406,7 @@ class _ImportScreenState extends State<ImportScreen> {
                   ListTile(
                     leading: const Icon(Icons.archive),
                     title: Text(p.basename(z.path)),
-                    subtitle: Text(_sizeLabel(z.lengthSync())),
+                    subtitle: Text(RomFile.formatBytes(z.lengthSync())),
                     trailing: const Icon(Icons.arrow_forward),
                     onTap: () => _import(z, isArchive: true),
                   ),
@@ -499,7 +414,7 @@ class _ImportScreenState extends State<ImportScreen> {
                   ListTile(
                     leading: const Icon(Icons.videogame_asset),
                     title: Text(p.basename(r.path)),
-                    subtitle: Text(_sizeLabel(r.lengthSync())),
+                    subtitle: Text(RomFile.formatBytes(r.lengthSync())),
                     trailing: const Icon(Icons.arrow_forward),
                     onTap: () => _import(r, isArchive: false),
                   ),
@@ -511,13 +426,6 @@ class _ImportScreenState extends State<ImportScreen> {
               ],
             ),
     );
-  }
-
-  static String _sizeLabel(int bytes) {
-    const gb = 1024 * 1024 * 1024.0, mb = 1024 * 1024.0;
-    if (bytes >= gb) return '${(bytes / gb).toStringAsFixed(1)} GB';
-    if (bytes >= mb) return '${(bytes / mb).toStringAsFixed(0)} MB';
-    return '$bytes B';
   }
 
   static bool _isInDownloads(String candidate) {

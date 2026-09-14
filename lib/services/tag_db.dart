@@ -7,6 +7,13 @@ import 'title_parser.dart';
 class TagDb {
   static Future<Database>? _opening;
 
+  /// Drops the memoized open so the next call re-reads `getDatabasesPath()`.
+  ///
+  /// For tests only: the memoized future pins the database file for the whole
+  /// process, so a test that points the factory at its own temp directory must
+  /// clear it between cases.
+  static void resetForTesting() => _opening = null;
+
   Future<Database> get _database {
     // Memoize the in-flight open so concurrent callers share one open (and one
     // connection) instead of racing to open the file twice.

@@ -16,13 +16,18 @@ class RomFile {
     required this.modified,
   });
 
-  String get sizeLabel {
+  String get sizeLabel => formatBytes(sizeBytes);
+
+  /// Formats [bytes] as a short human-readable size, e.g. `1.2 GB`, `345 MB`,
+  /// `12 KB`, `512 B`. One decimal below GB so multi-GB ROMs are comparable at
+  /// a glance; whole numbers above it, where the extra digit is noise.
+  static String formatBytes(int bytes) {
     const kb = 1024.0;
     const mb = kb * 1024;
     const gb = mb * 1024;
-    if (sizeBytes >= gb) return '${(sizeBytes / gb).toStringAsFixed(1)} GB';
-    if (sizeBytes >= mb) return '${(sizeBytes / mb).toStringAsFixed(0)} MB';
-    if (sizeBytes >= kb) return '${(sizeBytes / kb).toStringAsFixed(0)} KB';
-    return '$sizeBytes B';
+    if (bytes >= gb) return '${(bytes / gb).toStringAsFixed(1)} GB';
+    if (bytes >= mb) return '${(bytes / mb).toStringAsFixed(0)} MB';
+    if (bytes >= kb) return '${(bytes / kb).toStringAsFixed(0)} KB';
+    return '$bytes B';
   }
 }

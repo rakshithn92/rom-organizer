@@ -49,6 +49,7 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.4
+  sqflite_common_ffi: ^2.3.0
 
 # App launcher icon (run: flutter pub run flutter_launcher_icons).
 flutter_launcher_icons:

@@ -11,8 +11,23 @@ class VersionParser {
   // Match vX.Y.Z where the char before 'v' is a non-digit (space, dot,
   // underscore, bracket, start-of-string). A plain \b fails when 'v' is
   // preceded by '_' (a word char), e.g. Game_v1.6.0.nsp.
-  static final _vTag = RegExp(r'(?<![0-9])v(\d+(?:\.\d+)*)', caseSensitive: false);
+  //
+  // Shared with [TitleParser.clean] (which strips it) and
+  // [stripVersionTag] (which LibraryMaintenance uses to group update files):
+  // one instance keeps "what counts as a version tag" defined in one place.
+  static final RegExp versionTagRegex = RegExp(
+    r'(?<![0-9])v\d+(\.\d+)*',
+    caseSensitive: false,
+  );
+
   static final _bracketV = RegExp(r'\[v(\d+)\]', caseSensitive: false);
+
+  /// Removes every `vX.Y.Z` version tag from [fileName]. The `(?<![0-9])`
+  /// guard stops a digit-adjacent 'v' (e.g. the `10v2` in a hash-like name)
+  /// from reading as a version start, while still matching after a word char
+  /// such as `_` (`Game_v1.6.0`) — a plain `\b` would miss that case.
+  static String stripVersionTag(String fileName) =>
+      fileName.replaceAll(versionTagRegex, '');
 
   /// Extracts the version as a comparable [Version] from [fileName].
   /// Returns null if none is present.
@@ -22,9 +37,11 @@ class VersionParser {
     if (bracket != null) {
       return Version.fromString(bracket.group(1)!);
     }
-    final v = _vTag.firstMatch(fileName);
+    final v = versionTagRegex.firstMatch(fileName);
     if (v != null) {
-      return Version.fromString(v.group(1)!);
+      // Drop the leading 'v' ('V' when matched case-insensitively, hence the
+      // substring rather than a literal replace).
+      return Version.fromString(v.group(0)!.substring(1));
     }
     return null;
   }

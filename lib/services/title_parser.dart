@@ -1,3 +1,5 @@
+import 'version_parser.dart';
+
 /// Parses a ROM filename into a clean searchable game title.
 ///
 /// Strips common Switch release noise: region tags ([USA], (EUR), [EU]),
@@ -5,11 +7,11 @@
 class TitleParser {
   static final _bracketTag = RegExp(r'\[[^\]]*\]');
   static final _parenTag = RegExp(r'\([^)]*\)');
-  // Match vX.Y.Z where the char before 'v' is a non-digit (space, dot,
-  // underscore, bracket, start-of-string). A plain \b fails when 'v' is
+  // Shared with VersionParser so "what looks like a version tag" is defined
+  // once: it matches vX.Y.Z where the char before 'v' is a non-digit (space,
+  // dot, underscore, bracket, start-of-string). A plain \b fails when 'v' is
   // preceded by '_' (a word char), e.g. Game_v1.6.0.nsp.
-  static final _versionTag =
-      RegExp(r'(?<![0-9])v\d+(\.\d+)*', caseSensitive: false);
+  static final _versionTag = VersionParser.versionTagRegex;
   static final _updateWord = RegExp(r'\b(update|upd|patch|dlc|addon)\b',
       caseSensitive: false);
   static final _titleId =
