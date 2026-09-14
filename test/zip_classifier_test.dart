@@ -29,6 +29,27 @@ void main() {
       );
     });
 
+    test('classifies a DLC add-on title ID as dlc', () {
+      expect(
+        ZipClassifier.classifyPath('Game [0100C1B00A3A8002].nsp'),
+        RomEntryKind.dlc,
+      );
+    });
+
+    test('base 0100 title ID stays base', () {
+      expect(
+        ZipClassifier.classifyPath('Game [0100C1B00A3A8000].nsp'),
+        RomEntryKind.base,
+      );
+    });
+
+    test('classifies backslash-separated paths', () {
+      expect(
+        ZipClassifier.classifyPath(r'update\Game.v1.6.0.nsp'),
+        RomEntryKind.update,
+      );
+    });
+
     test('DLC markers are unchanged', () {
       expect(ZipClassifier.classifyPath('Game DLC.nsp'), RomEntryKind.dlc);
       expect(ZipClassifier.classifyPath('Game add-on.nsp'), RomEntryKind.dlc);

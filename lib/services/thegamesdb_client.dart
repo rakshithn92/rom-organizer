@@ -9,6 +9,24 @@ class GameMetadata {
   const GameMetadata({required this.title, this.boxartUrl});
 }
 
+/// Raised when TheGamesDB rejects a request for a reason the user can act on:
+/// a bad/forbidden API key (401/403) or a rate limit (429).
+///
+/// Transient failures (5xx, network errors, malformed responses) are reported
+/// as "no result" (`null`) instead, so callers only surface this to the user
+/// when the fix is on their side.
+class TheGamesDbException implements Exception {
+  final int? statusCode;
+  final String message;
+
+  const TheGamesDbException(this.statusCode, this.message);
+
+  @override
+  String toString() => statusCode == null
+      ? 'TheGamesDbException: $message'
+      : 'TheGamesDbException($statusCode): $message';
+}
+
 /// Client for TheGamesDB v1 API (https://api.thegamesdb.net).
 ///
 /// Requires a free API key (https://thegamesdb.net -> account -> API key).
@@ -19,9 +37,13 @@ class TheGamesDbClient {
 
   final String apiKey;
   final http.Client _http;
+  final Duration timeout;
 
-  TheGamesDbClient(this.apiKey, {http.Client? client})
-      : _http = client ?? http.Client();
+  TheGamesDbClient(
+    this.apiKey, {
+    http.Client? client,
+    this.timeout = const Duration(seconds: 15),
+  }) : _http = client ?? http.Client();
 
   /// Performs a one-off lookup and always releases its HTTP client.
   static Future<GameMetadata?> searchOnce(String apiKey, String query) async {
@@ -34,7 +56,11 @@ class TheGamesDbClient {
   }
 
   /// Searches for a game by name and returns the best Switch-platform match,
-  /// with its boxart. Returns null if nothing matches.
+  /// with its boxart. Returns null if nothing matches, or if the request fails
+  /// transiently (5xx/network/malformed JSON).
+  ///
+  /// Throws [TheGamesDbException] when the API key is rejected (401/403) or the
+  /// rate limit is hit (429).
   Future<GameMetadata?> search(String query) async {
     final uri = Uri.parse('$_base/Games/ByGameName').replace(
       queryParameters: {
@@ -44,10 +70,28 @@ class TheGamesDbClient {
         'include': 'boxart',
       },
     );
-    final resp = await _http.get(uri).timeout(const Duration(seconds: 15));
+    final resp = await _http.get(uri).timeout(timeout);
+    if (resp.statusCode == 401 || resp.statusCode == 403) {
+      throw TheGamesDbException(
+        resp.statusCode,
+        'TheGamesDB rejected the API key (HTTP ${resp.statusCode}). '
+        'Check the key in Settings.',
+      );
+    }
+    if (resp.statusCode == 429) {
+      throw TheGamesDbException(
+        resp.statusCode,
+        'TheGamesDB rate limit reached. Try again later.',
+      );
+    }
     if (resp.statusCode != 200) return null;
 
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    final Map<String, dynamic> body;
+    try {
+      body = jsonDecode(resp.body) as Map<String, dynamic>;
+    } catch (_) {
+      return null; // malformed/unexpected body: treat as no result
+    }
     final data = body['data'] as Map<String, dynamic>?;
     final games = data?['games'] as List<dynamic>?;
     if (games == null || games.isEmpty) return null;

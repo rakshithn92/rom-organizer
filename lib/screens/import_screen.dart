@@ -153,12 +153,24 @@ class _ImportScreenState extends State<ImportScreen> {
     var imported = 0, skipped = 0, warnings = 0;
     try {
       final currentPath = _current.path;
-      final files = await Isolate.run(
-        () => RomScanner().findImportables(
-          Directory(currentPath),
-          excludedRoots: const {AppPaths.managerRoot},
-        ),
-      );
+      final List<String> files;
+      try {
+        files = await Isolate.run(
+          () => RomScanner().findImportables(
+            Directory(currentPath),
+            excludedRoots: const {AppPaths.managerRoot},
+          ),
+        );
+      } catch (e) {
+        // The scan runs off the UI isolate; an unreadable folder surfaced here
+        // as an unhandled async error, leaving the user with no feedback.
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not scan the Downloads folder: $e')),
+          );
+        }
+        return;
+      }
       if (!mounted) return;
       if (files.isEmpty) {
         if (mounted) {

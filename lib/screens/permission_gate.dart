@@ -15,7 +15,8 @@ class PermissionGate extends StatefulWidget {
   State<PermissionGate> createState() => _PermissionGateState();
 }
 
-class _PermissionGateState extends State<PermissionGate> {
+class _PermissionGateState extends State<PermissionGate>
+    with WidgetsBindingObserver {
   bool _granted = false;
   bool _checking = true;
   bool _denied = false;
@@ -23,7 +24,23 @@ class _PermissionGateState extends State<PermissionGate> {
   @override
   void initState() {
     super.initState();
+    // openAppSettings() only fires an intent and returns immediately, so the
+    // grant made in system Settings is invisible until the app is resumed.
+    WidgetsBinding.instance.addObserver(this);
     _check();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Returning from Settings re-checks the permission instead of leaving the
+    // user stuck on a stale "denied" screen.
+    if (state == AppLifecycleState.resumed) _check();
   }
 
   Future<void> _check() async {

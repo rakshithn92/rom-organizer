@@ -54,7 +54,10 @@ class ZipClassifier {
 
   /// Classifies a single archive path as base / update / dlc.
   static RomEntryKind classifyPath(String path) {
-    final lower = path.toLowerCase();
+    // Zip entries written on Windows use "\" as the separator; normalize once
+    // so folder checks and the basename split work for both styles. Plain
+    // filenames (no separator) pass through unchanged.
+    final lower = path.replaceAll(r'\', '/').toLowerCase();
     final name = _basename(lower);
 
     // An "update/" folder in the zip is a strong signal.
@@ -69,8 +72,17 @@ class ZipClassifier {
     // version, for example "Game [0100...8800][v65536].nsp". The update ID is
     // authoritative and prevents these files from being mistaken for bases.
     final titleId = TitleParser.titleId(name);
-    if (titleId != null && TitleParser.isUpdateTitleId(titleId)) {
-      return RomEntryKind.update;
+    if (titleId != null) {
+      if (TitleParser.isUpdateTitleId(titleId)) {
+        return RomEntryKind.update;
+      }
+      // A well-formed 0100 ID that is neither the base (...000) nor an update
+      // (...800) is a DLC add-on index (...001, ...002, …). Without this a
+      // scene DLC like "Game [0100C1B00A3A8002].nsp" would fall through to
+      // base.
+      if (TitleParser.canonicalBaseTitleId(titleId) != titleId) {
+        return RomEntryKind.dlc;
+      }
     }
 
     // Filename markers.

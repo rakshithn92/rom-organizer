@@ -134,4 +134,43 @@ void main() {
 
     expect(rewrites, isEmpty);
   });
+
+  test('a conflicting source is not re-migrated on every launch', () async {
+    final oldRoms = Directory(p.join(temporaryDirectory.path, 'old'))
+      ..createSync(recursive: true);
+    Directory(library).createSync(recursive: true);
+    File(p.join(oldRoms.path, 'same.nsp')).writeAsStringSync('old');
+    File(p.join(library, 'same.nsp')).writeAsStringSync('new');
+    final migrator = StorageMigrator(
+      libraryRoot: library,
+      contentRoot: content,
+      legacyLibraryRoots: [oldRoms.path],
+      legacyContentRoots: const [],
+    );
+
+    final first = await migrator.run();
+    expect(first.conflicts, hasLength(1));
+
+    final sourceMarker = File(
+      p.join(
+        content,
+        '.downloads_migration_v1.'
+            '${oldRoms.path.replaceAll(RegExp('[^A-Za-z0-9]'), '_')}',
+      ),
+    );
+    expect(sourceMarker.existsSync(), isTrue);
+
+    // The second launch must not walk the source again: nothing moves, and the
+    // unresolved item is still reported without a fresh scan.
+    final second = await migrator.run();
+    expect(second.movedFiles, 0);
+    expect(second.conflicts, hasLength(1));
+    expect(second.alreadyCompleted, isFalse);
+    expect(File(p.join(library, 'same.nsp')).readAsStringSync(), 'new');
+    expect(File(p.join(oldRoms.path, 'same.nsp')).readAsStringSync(), 'old');
+    expect(
+      File(p.join(content, '.downloads_migration_v1')).existsSync(),
+      isFalse,
+    );
+  });
 }

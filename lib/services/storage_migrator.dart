@@ -35,7 +35,17 @@ class MigrationReport {
 
 /// Creates the Downloads-scoped layout and imports data from older releases.
 ///
-/// The marker is written only after all readable sources have been processed.
+/// Each legacy root is processed at most once. After a root has been merged it
+/// gets its own marker (`.downloads_migration_v1.<sanitized source>` inside the
+/// content root) that records what it left behind — `completed` when clean, or
+/// conflicting pairs. Later launches skip the root entirely and replay any
+/// recorded conflicts from the marker instead of rescanning the tree; without
+/// this a conflict that can never resolve would force a full re-migration on
+/// every launch.
+///
+/// The global `.downloads_migration_v1` marker keeps its original meaning: it
+/// is written only when every source ended with no conflicts and no errors.
+///
 /// Conflicting files are deliberately left at the old location and reported;
 /// an existing destination is never overwritten.
 class StorageMigrator {
@@ -54,6 +64,42 @@ class StorageMigrator {
   });
 
   String get _markerPath => p.join(contentRoot, '.downloads_migration_v1');
+
+  /// Per-source marker recording that [source] was already processed, so it is
+  /// never merged twice. The full source path is sanitized (every
+  /// non-alphanumeric character becomes `_`) because distinct legacy roots can
+  /// share a basename (`.../ROM` and `.../Download/ROM`), and a shared marker
+  /// would silently skip one of them.
+  String _sourceMarkerPath(String source) =>
+      p.join(contentRoot, '.downloads_migration_v1.${_sanitizeSource(source)}');
+
+  static String _sanitizeSource(String source) =>
+      source.replaceAll(RegExp('[^A-Za-z0-9]'), '_');
+
+  /// A source that was clean is recorded as `completed`; one that left
+  /// conflicting files behind records them (one `conflict\t<from>\t<to>` line
+  /// each) so a later launch can report the same unresolved items without
+  /// walking the source tree again — and so the global completion marker stays
+  /// unwritten while anything is still unresolved.
+  static String _encodeSourceMarker(List<MigrationConflict> conflicts) {
+    if (conflicts.isEmpty) return 'completed\n';
+    final buffer = StringBuffer();
+    for (final conflict in conflicts) {
+      buffer.writeln('conflict\t${conflict.source}\t${conflict.destination}');
+    }
+    return buffer.toString();
+  }
+
+  static List<MigrationConflict> _readSourceMarker(File marker) {
+    final conflicts = <MigrationConflict>[];
+    for (final line in marker.readAsLinesSync()) {
+      final parts = line.split('\t');
+      if (parts.length == 3 && parts.first == 'conflict') {
+        conflicts.add(MigrationConflict(parts[1], parts[2]));
+      }
+    }
+    return conflicts;
+  }
 
   Future<MigrationReport> run() async {
     final conflicts = <MigrationConflict>[];
@@ -85,6 +131,14 @@ class StorageMigrator {
         if (!sourceDir.existsSync() || _sameOrInside(source, destination)) {
           continue;
         }
+        final marker = File(_sourceMarkerPath(source));
+        // A source already handled by an earlier run is never merged twice.
+        // Conflicts recorded in the marker are replayed so the report (and the
+        // launch screen riding on it) keeps telling the user what is stuck.
+        if (marker.existsSync()) {
+          conflicts.addAll(_readSourceMarker(marker));
+          continue;
+        }
         try {
           final conflictsBefore = conflicts.length;
           moved += _mergeDirectory(sourceDir, Directory(destination), conflicts);
@@ -95,6 +149,10 @@ class StorageMigrator {
             await migrateMetadata!(source, destination);
           }
           _deleteEmptyTree(sourceDir);
+          marker.writeAsStringSync(
+            _encodeSourceMarker(conflicts.sublist(conflictsBefore)),
+            flush: true,
+          );
         } catch (e) {
           errors.add('Could not migrate $source: $e');
         }

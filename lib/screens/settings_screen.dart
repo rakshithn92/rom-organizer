@@ -25,10 +25,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _load() async {
-    final key = await _db.getSetting('thegamesdb_api_key');
+    // A failed DB read must not leave the screen on a permanent spinner: show
+    // the form (empty field) so the user can still enter/save a key.
+    String key = '';
+    try {
+      key = await _db.getSetting('thegamesdb_api_key') ?? '';
+    } catch (_) {
+      key = '';
+    }
     if (!mounted) return;
     setState(() {
-      _keyController.text = key ?? '';
+      _keyController.text = key;
       _loaded = true;
     });
   }

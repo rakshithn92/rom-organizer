@@ -35,4 +35,52 @@ void main() {
     expect(result?.boxartUrl, isNull);
     client.close();
   });
+
+  test('throws TheGamesDbException on 401 (bad API key)', () async {
+    final client = TheGamesDbClient(
+      'bad-key',
+      client: MockClient((_) async => http.Response('Unauthorized', 401)),
+    );
+
+    await expectLater(
+      client.search('Game'),
+      throwsA(isA<TheGamesDbException>()
+          .having((e) => e.statusCode, 'statusCode', 401)),
+    );
+    client.close();
+  });
+
+  test('throws TheGamesDbException on 429 (rate limited)', () async {
+    final client = TheGamesDbClient(
+      'test-key',
+      client: MockClient((_) async => http.Response('Too Many Requests', 429)),
+    );
+
+    await expectLater(
+      client.search('Game'),
+      throwsA(isA<TheGamesDbException>()
+          .having((e) => e.statusCode, 'statusCode', 429)),
+    );
+    client.close();
+  });
+
+  test('returns null on 500 (transient server error)', () async {
+    final client = TheGamesDbClient(
+      'test-key',
+      client: MockClient((_) async => http.Response('Server Error', 500)),
+    );
+
+    expect(await client.search('Game'), isNull);
+    client.close();
+  });
+
+  test('returns null on malformed JSON with a 200 status', () async {
+    final client = TheGamesDbClient(
+      'test-key',
+      client: MockClient((_) async => http.Response('<html>not json</html>', 200)),
+    );
+
+    expect(await client.search('Game'), isNull);
+    client.close();
+  });
 }

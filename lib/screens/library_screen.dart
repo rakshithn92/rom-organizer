@@ -38,6 +38,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
   List<Directory> _games = [];
   Map<String, String> _covers = {}; // game folder path -> boxart url
   bool _loading = true;
+  /// True while a destructive library operation (merge, cleanup, maintain) or
+  /// a reload is running. Gates the appbar actions so destructive operations
+  /// can never overlap on the same folders.
+  bool _busy = false;
   bool _mergeMode = false;
   final Set<String> _selected = {}; // paths selected for merge
   int _loadGeneration = 0;
@@ -48,47 +52,96 @@ class _LibraryScreenState extends State<LibraryScreen> {
     _load();
   }
 
-  Future<void> _load() async {
-    final gen = ++_loadGeneration;
-    setState(() => _loading = true);
-    final root = Directory(AppPaths.libraryRoot);
-    final games = <Directory>[];
-    if (root.existsSync()) {
-      for (final e in root.listSync(followLinks: false)) {
-        if (e is Directory) games.add(e);
-      }
-    }
-    games.sort((a, b) => a.path.compareTo(b.path));
+  /// Empty-string sentinel stored under `cover:<path>` once a search has
+  /// definitively found no cover, so later loads skip that game.
+  static const String _noCover = '';
+  /// How many cover lookups may be in flight at once (TheGamesDB allows a
+  /// handful of parallel requests; more just invites rate limiting).
+  static const int _coverWorkers = 4;
 
-    // Fetch covers for games that don't have one cached yet.
-    final covers = <String, String>{};
-    final key = await _db.getSetting('thegamesdb_api_key');
-    for (final g in games) {
-      final cached = await _db.getSetting('cover:${g.path}');
-      if (cached != null) {
-        covers[g.path] = cached;
-      } else if (key != null && key.isNotEmpty) {
-        try {
-          final meta = await TheGamesDbClient.searchOnce(
-            key,
-            p.basename(g.path),
-          );
-          if (meta?.boxartUrl != null) {
-            covers[g.path] = meta!.boxartUrl!;
-            await _db.saveSetting('cover:${g.path}', meta.boxartUrl!);
-          }
-        } catch (_) {
-          // Skip on network failure.
+  Future<void> _load() async {
+    if (!mounted) return;
+    final gen = ++_loadGeneration;
+    setState(() {
+      _loading = true;
+      _busy = true;
+    });
+    try {
+      final root = Directory(AppPaths.libraryRoot);
+      final games = <Directory>[];
+      if (root.existsSync()) {
+        for (final e in root.listSync(followLinks: false)) {
+          if (e is Directory) games.add(e);
         }
       }
-    }
+      games.sort((a, b) => a.path.compareTo(b.path));
 
-    if (gen != _loadGeneration || !mounted) return;
-    setState(() {
-      _games = games;
-      _covers = covers;
-      _loading = false;
-    });
+      // Cached covers come from local SQLite, so they resolve fast enough to
+      // show the library immediately; only the network lookups below are slow.
+      final covers = <String, String>{};
+      final uncached = <Directory>[];
+      for (final g in games) {
+        final cached = await _db.getSetting('cover:${g.path}');
+        if (cached == null) {
+          uncached.add(g);
+        } else {
+          covers[g.path] = cached;
+        }
+      }
+
+      if (gen != _loadGeneration || !mounted) return;
+      setState(() {
+        _games = games;
+        _covers = covers;
+        _loading = false;
+      });
+
+      if (uncached.isEmpty) return;
+      final key = await _db.getSetting('thegamesdb_api_key');
+      if (key == null || key.isEmpty) return;
+
+      // Fetch the missing covers with a small worker pool instead of one long
+      // serial loop, patching the grid after each one lands.
+      var next = 0;
+      Future<void> worker() async {
+        while (true) {
+          if (gen != _loadGeneration || !mounted) return;
+          final i = next++;
+          if (i >= uncached.length) return;
+          final path = uncached[i].path;
+          String? url;
+          try {
+            final meta = await TheGamesDbClient.searchOnce(
+              key,
+              p.basename(path),
+            );
+            url = meta?.boxartUrl;
+          } on TheGamesDbException {
+            // Rate limited / rejected: leave uncached so the next load retries.
+            continue;
+          } catch (_) {
+            // Network failure: also retry next load.
+            continue;
+          }
+          if (gen != _loadGeneration || !mounted) return;
+          // A null boxart is a definitive "no cover" — remember it so the next
+          // load doesn't search this game again.
+          final value = url ?? _noCover;
+          await _db.saveSetting('cover:$path', value);
+          if (gen != _loadGeneration || !mounted) return;
+          setState(() => _covers[path] = value);
+        }
+      }
+
+      await Future.wait(
+        List.generate(
+          _coverWorkers < uncached.length ? _coverWorkers : uncached.length,
+          (_) => worker(),
+        ),
+      );
+    } finally {
+      if (mounted && gen == _loadGeneration) setState(() => _busy = false);
+    }
   }
 
   /// Merges the selected folders into [target]. The target keeps its name and
@@ -128,30 +181,39 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
     if (confirm != true || !mounted) return;
 
-    final moved = await Isolate.run(
-      () => Importer(AppPaths.libraryRoot).mergeGames(target.path, sources),
-    );
+    setState(() => _busy = true);
+    final int moved;
+    try {
+      moved = await Isolate.run(
+        () => Importer(AppPaths.libraryRoot).mergeGames(target.path, sources),
+      );
+      if (!mounted) return;
+      // Remove the cover + title-ID cache keys for the merged-away source
+      // folders, but first carry a source title-ID onto the target if it has
+      // none yet.
+      final db = TagDb();
+      String? capturedTitleId;
+      for (final s in sources) {
+        capturedTitleId ??= await db.titleIdForFolder(s);
+      }
+      if (capturedTitleId != null &&
+          await db.titleIdForFolder(target.path) == null) {
+        await db.saveTitleId(target.path, capturedTitleId);
+      }
+      for (final s in sources) {
+        await db.deleteSetting('cover:$s');
+        await db.deleteTitleId(s);
+      }
+      if (!mounted) return;
+      setState(() {
+        _mergeMode = false;
+        _selected.clear();
+      });
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
     if (!mounted) return;
-    // Remove the cover + title-ID cache keys for the merged-away source folders,
-    // but first carry a source title-ID onto the target if it has none yet.
-    final db = TagDb();
-    String? capturedTitleId;
-    for (final s in sources) {
-      capturedTitleId ??= await db.titleIdForFolder(s);
-    }
-    if (capturedTitleId != null &&
-        await db.titleIdForFolder(target.path) == null) {
-      await db.saveTitleId(target.path, capturedTitleId);
-    }
-    for (final s in sources) {
-      await db.deleteSetting('cover:$s');
-      await db.deleteTitleId(s);
-    }
-    setState(() {
-      _mergeMode = false;
-      _selected.clear();
-    });
-    _load();
+    await _load();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Merged $moved file(s) into ${p.basename(target.path)}.')),
@@ -199,21 +261,46 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ],
       ),
     );
-    if (confirm != true) return;
+    if (confirm != true || !mounted) return;
 
-    for (final d in empty) {
-      try {
-        d.deleteSync(recursive: true);
-        await TagDb().deleteSetting('cover:${d.path}');
-        await TagDb().deleteTitleId(d.path);
-      } catch (_) {
-        // Skip folders that fail to delete.
+    setState(() => _busy = true);
+    final int removed;
+    try {
+      // Deleting recursive folder trees blocks for however long the FS takes,
+      // so it runs off the UI isolate. Only the folder paths cross over.
+      final folderPaths = empty.map((d) => d.path).toList();
+      removed = await Isolate.run(() {
+        var count = 0;
+        for (final path in folderPaths) {
+          try {
+            final dir = Directory(path);
+            if (!dir.existsSync()) continue; // already gone: nothing to remove
+            // Re-check inside the isolate: a file may have appeared since the
+            // emptiness scan, and a folder with any file must never be deleted.
+            if (_dirHasAnyFileRecursive(dir)) continue;
+            dir.deleteSync(recursive: true);
+            // Count the folder as removed only once it is actually gone, so a
+            // delete that fails does not inflate the reported count.
+            if (!dir.existsSync()) count++;
+          } catch (_) {
+            // Skip folders that fail to delete.
+          }
+        }
+        return count;
+      });
+      final db = TagDb();
+      for (final d in empty) {
+        await db.deleteSetting('cover:${d.path}');
+        await db.deleteTitleId(d.path);
       }
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
-    _load();
+    if (!mounted) return;
+    await _load();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Removed ${empty.length} empty folder(s).')),
+        SnackBar(content: Text('Removed $removed empty folder(s).')),
       );
     }
   }
@@ -244,58 +331,71 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
     if (confirm != true || !mounted) return;
 
-    final gamePaths = _games.map((game) => game.path).toList();
-    final result = await Isolate.run(() {
-      final importer = Importer(AppPaths.libraryRoot);
-      var deleted = 0;
-      for (final gamePath in gamePaths) {
-        deleted += importer.deleteOldUpdates(gamePath);
-      }
-      return (deleted: deleted, missing: importer.findMissingUpdates());
-    });
-    final deleted = result.deleted;
-    final missing = result.missing;
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          deleted > 0
-              ? 'Deleted $deleted old update file(s).'
-              : 'No old updates to delete.',
-        ),
-      ),
-    );
-    if (missing.isNotEmpty) {
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Missing updates'),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: ListView(
-              shrinkWrap: true,
-              children: [
-                const Text('These games have a base file but no update:'),
-                const SizedBox(height: 8),
-                for (final m in missing)
-                  ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.system_update_alt),
-                    title: Text(p.basename(m)),
-                  ),
-              ],
-            ),
+    setState(() => _busy = true);
+    try {
+      final gamePaths = _games.map((game) => game.path).toList();
+      final result = await Isolate.run(() {
+        final importer = Importer(AppPaths.libraryRoot);
+        var deleted = 0;
+        for (final gamePath in gamePaths) {
+          deleted += importer.deleteOldUpdates(gamePath);
+        }
+        return (deleted: deleted, missing: importer.findMissingUpdates());
+      });
+      final deleted = result.deleted;
+      final missing = result.missing;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            deleted > 0
+                ? 'Deleted $deleted old update file(s).'
+                : 'No old updates to delete.',
           ),
-          actions: [
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('OK'),
-            ),
-          ],
         ),
       );
+      if (missing.isNotEmpty) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Missing updates'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  const Text('These games have a base file but no update:'),
+                  const SizedBox(height: 8),
+                  for (final m in missing)
+                    ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.system_update_alt),
+                      title: Text(p.basename(m)),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
-    _load();
+    if (!mounted) return;
+    await _load();
+  }
+
+  /// Cached cover lookup. The [_noCover] sentinel means "known to have no
+  /// cover" and maps to null so the card shows its placeholder icon.
+  String? _coverFor(String path) {
+    final url = _covers[path];
+    return (url == null || url.isEmpty) ? null : url;
   }
 
   @override
@@ -316,21 +416,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
             IconButton(
               icon: const Icon(Icons.merge),
               tooltip: 'Merge duplicate folders',
-              onPressed: () => setState(() => _mergeMode = true),
+              onPressed: _busy ? null : () => setState(() => _mergeMode = true),
             ),
           IconButton(
             icon: const Icon(Icons.cleaning_services),
             tooltip: 'Remove empty folders',
-            onPressed: _cleanupEmpty,
+            onPressed: _busy ? null : _cleanupEmpty,
           ),
           IconButton(
             icon: const Icon(Icons.system_update_alt),
             tooltip: 'Delete old updates + find missing',
-            onPressed: _maintain,
+            onPressed: _busy ? null : _maintain,
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _load,
+            onPressed: _busy ? null : _load,
           ),
         ],
       ),
@@ -358,7 +458,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         itemCount: _games.length,
                         itemBuilder: (ctx, i) => _GameCard(
                           game: _games[i],
-                          coverUrl: _covers[_games[i].path],
+                          coverUrl: _coverFor(_games[i].path),
                           mergeMode: _mergeMode,
                           selected: _selected.contains(_games[i].path),
                           onTap: _mergeMode
@@ -721,8 +821,17 @@ class _GameDetailState extends State<_GameDetail> {
                       // Capture context-dependent objects before the await.
                       final messenger = ScaffoldMessenger.of(context);
                       final navigator = Navigator.of(context);
+                      final path = game.path;
                       try {
-                        if (_dirHasAnyFileRecursive(game)) {
+                        // Recursive delete can block on slow storage — keep it
+                        // off the UI isolate.
+                        final removed = await Isolate.run(() {
+                          final dir = Directory(path);
+                          if (_dirHasAnyFileRecursive(dir)) return false;
+                          if (dir.existsSync()) dir.deleteSync(recursive: true);
+                          return true;
+                        });
+                        if (!removed) {
                           messenger.showSnackBar(
                             const SnackBar(
                               content: Text(
@@ -732,9 +841,9 @@ class _GameDetailState extends State<_GameDetail> {
                           );
                           return;
                         }
-                        game.deleteSync(recursive: true);
-                        await TagDb().deleteSetting('cover:${game.path}');
-                        await TagDb().deleteTitleId(game.path);
+                        final db = TagDb();
+                        await db.deleteSetting('cover:$path');
+                        await db.deleteTitleId(path);
                         messenger.showSnackBar(
                           const SnackBar(content: Text('Empty folder removed.')),
                         );

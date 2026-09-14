@@ -5,12 +5,17 @@ import 'title_parser.dart';
 
 /// SQLite persistence for app settings (TheGamesDB API key, cached cover art).
 class TagDb {
-  static Database? _db;
+  static Future<Database>? _opening;
 
-  Future<Database> get _database async {
-    if (_db != null) return _db!;
+  Future<Database> get _database {
+    // Memoize the in-flight open so concurrent callers share one open (and one
+    // connection) instead of racing to open the file twice.
+    return _opening ??= _open();
+  }
+
+  Future<Database> _open() async {
     final dir = await getDatabasesPath();
-    _db = await openDatabase(
+    return openDatabase(
       p.join(dir, 'rom_tags.db'),
       version: 2,
       onCreate: (db, _) async {
@@ -33,7 +38,6 @@ class TagDb {
         }
       },
     );
-    return _db!;
   }
 
   Future<void> saveSetting(String key, String value) async {
@@ -48,7 +52,7 @@ class TagDb {
   Future<String?> getSetting(String key) async {
     final db = await _database;
     final rows = await db.query('settings', where: 'key = ?', whereArgs: [key]);
-    return rows.isEmpty ? null : rows.first['value'] as String;
+    return rows.isEmpty ? null : rows.first['value'] as String?;
   }
 
   /// Removes a setting entirely (a real delete, not a blank write).
@@ -115,7 +119,9 @@ class TagDb {
     for (final r in rows) {
       // Normalize both sides so databases created by older app versions, which
       // stored the raw ID, continue to work without a schema migration.
-      if (TitleParser.canonicalBaseTitleId(r['value'] as String) == wanted) {
+      final value = r['value'] as String?;
+      if (value == null) continue;
+      if (TitleParser.canonicalBaseTitleId(value) == wanted) {
         return (r['key'] as String).substring('titleid:'.length);
       }
     }
