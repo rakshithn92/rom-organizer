@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Legacy Auto Backup rules for Android 11 (API 30) and lower (attribute
+  android:fullBackupContent). Mirrors data_extraction_rules.xml: the database
+  domain holds rom_tags.db with the TheGamesDB API key in plaintext and must
+  not leave the device.
+-->
+<full-backup-content>
+    <exclude domain="database" path="." />
+</full-backup-content>

@@ -1,0 +1,200 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  # Decoded keystore location; the Android build resolves absolute storeFile
+  # paths as-is (a relative path would resolve against android/app/).
+  KEYSTORE_PATH: ${{ github.workspace }}/android/app/release.keystore
+
+jobs:
+  release:
+    name: Build & publish APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # Caches the Flutter SDK and the pub cache (keyed on pubspec.lock).
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Resolve version from tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          build_name=""
+          build_number=""
+          if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\+[1-9][0-9]*)?$ ]]; then
+            build_name="${tag#v}"
+            if [[ "$build_name" == *+* ]]; then
+              build_number="${build_name##*+}"
+              build_name="${build_name%%+*}"
+            else
+              # No build number in the tag: keep the one from pubspec.yaml.
+              build_number="$(sed -n 's/^version:[[:space:]]*[0-9.]*+\([1-9][0-9]*\).*/\1/p' pubspec.yaml | head -n 1)"
+            fi
+          fi
+          if [[ -z "$build_name" || -z "$build_number" ]]; then
+            echo "::notice::Tag '$tag' is not a plain vX.Y.Z[+N] tag; using the version from pubspec.yaml."
+            build_name=""
+            build_number=""
+          fi
+          {
+            echo "build_name=$build_name"
+            echo "build_number=$build_number"
+          } >> "$GITHUB_OUTPUT"
+
+      # The `secrets` context is not available in step-level `if:` conditions,
+      # so presence is detected here and consumed by the next step.
+      - name: Check for signing secrets
+        id: secrets
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$KEYSTORE_BASE64" ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "present=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::KEYSTORE_BASE64 is not set; the release APK will be debug-signed."
+
+      # Runs only when the signing secrets are configured. Everything it writes
+      # is gitignored (android/key.properties, android/**/*.keystore).
+      - name: Configure release signing
+        id: signing
+        if: steps.secrets.outputs.present == 'true'
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              missing="$missing $name"
+            fi
+          done
+          if [[ -n "$missing" ]]; then
+            echo "::error::KEYSTORE_BASE64 is set but these secrets are missing:$missing"
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          if [[ ! -s "$KEYSTORE_PATH" ]]; then
+            echo "::error::KEYSTORE_BASE64 did not decode to a non-empty file."
+            exit 1
+          fi
+          if command -v keytool >/dev/null 2>&1; then
+            keytool -list -keystore "$KEYSTORE_PATH" -storepass "$KEYSTORE_PASSWORD" >/dev/null || {
+              echo "::error::The decoded keystore cannot be opened with KEYSTORE_PASSWORD."
+              exit 1
+            }
+          fi
+          # Absolute storeFile: relative paths would resolve against android/app/.
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$KEYSTORE_PATH" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" \
+            > android/key.properties
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build release APK
+        shell: bash
+        # ORG_ROM_* env vars are the same fallback the Android build reads, so they
+        # are exported only once the keystore actually exists — a stray password
+        # secret with no keystore would otherwise look "configured" to Gradle and
+        # fail the build on a missing file.
+        env:
+          ORG_ROM_KEYSTORE_PATH: ${{ steps.signing.outputs.signed == 'true' && env.KEYSTORE_PATH || '' }}
+          ORG_ROM_KEYSTORE_PASSWORD: ${{ steps.signing.outputs.signed == 'true' && secrets.KEYSTORE_PASSWORD || '' }}
+          ORG_ROM_KEY_ALIAS: ${{ steps.signing.outputs.signed == 'true' && secrets.KEY_ALIAS || '' }}
+          ORG_ROM_KEY_PASSWORD: ${{ steps.signing.outputs.signed == 'true' && secrets.KEY_PASSWORD || '' }}
+        run: |
+          set -euo pipefail
+          args=(--release)
+          if [[ -n "${{ steps.version.outputs.build_name }}" && -n "${{ steps.version.outputs.build_number }}" ]]; then
+            args+=(--build-name "${{ steps.version.outputs.build_name }}" --build-number "${{ steps.version.outputs.build_number }}")
+          fi
+          if [[ "${{ steps.signing.outputs.signed }}" == "true" ]]; then
+            echo "Building keystore-signed release APK (${args[*]})"
+          else
+            echo "::warning::Signing secrets are not configured; building a debug-signed APK."
+          fi
+          flutter build apk "${args[@]}"
+
+      - name: Name artifact
+        id: naming
+        shell: bash
+        run: |
+          set -euo pipefail
+          suffix=""
+          if [[ "${{ steps.signing.outputs.signed }}" != "true" ]]; then
+            suffix="-debug-signed"
+          fi
+          # Artifact names reject "/" and other punctuation, and tags may contain
+          # them (e.g. v1.0.0/beta); collapse anything unusual to "-".
+          safe_tag="$(printf '%s' "${GITHUB_REF_NAME}" | tr -c 'A-Za-z0-9._+-' '-')"
+          echo "apk_name=rom-organizer-${safe_tag}${suffix}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.naming.outputs.apk_name }}
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+      - name: Attach APK to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/app/outputs/flutter-apk/app-release.apk
+          fail_on_unmatched_files: true
+
+      - name: Job summary
+        shell: bash
+        run: |
+          {
+            if [[ "${{ steps.signing.outputs.signed }}" == "true" ]]; then
+              echo "### Signing"
+              echo ""
+              echo "APK **keystore-signed** with the release key from repository secrets."
+              echo ""
+              echo "Workflow artifact: \`${{ steps.naming.outputs.apk_name }}\` — Release asset: \`app-release.apk\`."
+            else
+              echo "### Signing"
+              echo ""
+              echo "**Debug-signed fallback** — the signing secrets (\`KEYSTORE_BASE64\`, \`KEYSTORE_PASSWORD\`, \`KEY_ALIAS\`, \`KEY_PASSWORD\`) are not configured, so this APK cannot be published as a real update."
+              echo ""
+              echo "Workflow artifact: \`${{ steps.naming.outputs.apk_name }}\` — Release asset: \`app-release.apk\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

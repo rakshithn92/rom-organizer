@@ -8,7 +8,14 @@
     <application
         android:label="ROM Organizer"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules">
+        <!-- Backup is enabled (allowBackup="true", the platform default) so ordinary app data
+             survives a reinstall, but res/xml/data_extraction_rules.xml (API 31+) and
+             res/xml/backup_rules.xml (API 30 and lower) exclude the databases directory: it
+             holds the TheGamesDB API key in plaintext and must not leave the device. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

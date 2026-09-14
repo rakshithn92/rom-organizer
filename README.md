@@ -66,6 +66,13 @@ Download the latest `app-release.apk` from the
 sideload it. You may need to allow "install from unknown sources" for your
 browser/file manager.
 
+> **Upgrading from an older release:** releases used to be signed with the
+> debug key and are now signed with a real release key. Android refuses to
+> update across a signature change, so **uninstall the previously installed
+> version first**, then install the new APK. This is a one-time migration; it
+> deletes app-local data (imported-library metadata and your saved TheGamesDB
+> key), but your ROM files on storage are not touched.
+
 ## Build from source
 
 ```bash
@@ -75,6 +82,58 @@ flutter test
 flutter build apk --release
 # APK at build/app/outputs/flutter-apk/app-release.apk
 ```
+
+Without signing configuration this produces a debug-signed APK, which is fine
+for local testing but cannot be published as an update for an existing install.
+
+## Release process
+
+Releases are built by `.github/workflows/release.yml`, which runs on any pushed
+`v*` tag. CI (`.github/workflows/ci.yml`) runs `flutter analyze` and
+`flutter test` on every pull request and on pushes to `main`.
+
+**One-time setup** — create a keystore and store it in repository secrets:
+
+```bash
+keytool -genkeypair -v -keystore release.keystore -alias rom-organizer \
+  -keyalg RSA -keysize 2048 -validity 10000
+base64 release.keystore | tr -d '\n'   # copy this output into KEYSTORE_BASE64
+```
+
+Add these secrets under **Settings → Secrets and variables → Actions**:
+
+| Secret | Contents |
+| --- | --- |
+| `KEYSTORE_BASE64` | base64-encoded `release.keystore` (single line) |
+| `KEYSTORE_PASSWORD` | keystore password |
+| `KEY_ALIAS` | key alias, e.g. `rom-organizer` |
+| `KEY_PASSWORD` | key password |
+
+`keytool` writes a PKCS12 keystore by default, where the key password and the
+keystore password are the same value — set both secrets to that password.
+
+**Cutting a release:**
+
+1. Update `version:` in `pubspec.yaml` and commit it on `main`.
+2. Push a matching tag, e.g. `git tag v1.8.0 && git push origin v1.8.0`.
+   A `vX.Y.Z+build` tag overrides the pubspec build number for that build.
+3. The workflow gates on analyze + tests, writes `android/key.properties` and
+   the decoded keystore, builds `app-release.apk`, uploads it as a workflow
+   artifact, and attaches it to the GitHub Release for the tag. The job summary
+   states which signing was used.
+
+If `KEYSTORE_BASE64` is not configured, the workflow still builds and publishes,
+but falls back to the debug-signing in `android/app/build.gradle.kts`; the
+artifact is then named `rom-organizer-<tag>-debug-signed` and the job summary
+flags it. Such an APK cannot replace a keystore-signed install.
+
+Keep `release.keystore` backed up somewhere safe and outside the repository —
+losing it means losing the ability to update existing installs. `key.properties`
+and `*.keystore` are gitignored.
+
+**Manual follow-ups** (repository settings, not enforceable from this repo):
+protect `main` and require the CI check before merging, and add a
+`release` environment if you want approvals before a tag publishes an APK.
 
 ## How it works
 
