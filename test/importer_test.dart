@@ -620,7 +620,7 @@ void main() {
         ..addFile(ArchiveFile('Game.nsp', 4, 'base'.codeUnits));
       final tarBytes = TarEncoder().encode(tarArchive);
       final gzBytes = GZipEncoder().encode(tarBytes);
-      gzPath() => '${tmp.path}/bad.tar.gz';
+      String gzPath() => '${tmp.path}/bad.tar.gz';
       final bytes = Uint8List.fromList(gzBytes);
       // Corrupt the middle of the deflate stream.
       bytes[bytes.length ~/ 2] ^= 0xFF;

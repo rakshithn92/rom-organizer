@@ -107,4 +107,87 @@ void main() {
     expect(FileMover.moveFile(source.path, destination), isTrue);
     expect(Directory('$destination.claim').existsSync(), isFalse);
   });
+
+  test(
+      'moveFile onto a path occupied by a directory fails and leaves no '
+      'partial destination', () {
+    final source = File('${temporaryDirectory.path}/source.nsp')
+      ..writeAsBytesSync([1, 2, 3]);
+    // A directory in the destination slot defeats both the rename and the copy
+    // fallback, and the failed fallback must not leave a partial file behind
+    // (a retry would then refuse with "already exists").
+    final occupied = Directory('${temporaryDirectory.path}/occupied.nsp')
+      ..createSync();
+
+    expect(
+      () => FileMover.moveFile(source.path, occupied.path),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(source.existsSync(), isTrue);
+    expect(source.readAsBytesSync(), [1, 2, 3]);
+    expect(File(occupied.path).existsSync(), isFalse);
+    expect(occupied.existsSync(), isTrue);
+    expect(occupied.listSync(), isEmpty);
+    expect(Directory('${occupied.path}.claim').existsSync(), isFalse);
+  });
+
+  test('a failed move through a file-blocker parent leaves the source intact',
+      () {
+    // Variant of the blocker test that also pins the source bytes and the fact
+    // that the claim left for the destination is released again.
+    final source = File('${temporaryDirectory.path}/source.nsp')
+      ..writeAsBytesSync([7, 8, 9]);
+    final blocker = File('${temporaryDirectory.path}/blocker.nsp')
+      ..writeAsBytesSync([1]);
+    final destination = '${blocker.path}/child.nsp';
+
+    expect(
+      () => FileMover.moveFile(source.path, destination),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(source.readAsBytesSync(), [7, 8, 9]);
+    expect(File(destination).existsSync(), isFalse);
+    expect(Directory('$destination.claim').existsSync(), isFalse);
+  });
+
+  test('moveDirectory leaves the source intact when the destination exists',
+      () {
+    final source = Directory('${temporaryDirectory.path}/source')
+      ..createSync();
+    File('${source.path}/game.nsp').writeAsBytesSync([1, 2, 3]);
+    final existing = Directory('${temporaryDirectory.path}/destination')
+      ..createSync();
+    File('${existing.path}/other.nsp').writeAsBytesSync([4]);
+
+    expect(
+      () => FileMover.moveDirectory(source.path, existing.path),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(source.existsSync(), isTrue);
+    expect(File('${source.path}/game.nsp').readAsBytesSync(), [1, 2, 3]);
+    expect(File('${existing.path}/other.nsp').readAsBytesSync(), [4]);
+    expect(File('${existing.path}/game.nsp').existsSync(), isFalse);
+  });
+
+  test(
+      'moveDirectory removes its partial copy when the fallback fails on a '
+      'file-blocked destination', () {
+    final source = Directory('${temporaryDirectory.path}/source')
+      ..createSync();
+    File('${source.path}/game.nsp').writeAsBytesSync([1, 2, 3]);
+    // A regular FILE in the destination slot makes `renameSync` fail (type
+    // mismatch) and the copy fallback fail (cannot create the directory), so
+    // the partial destination produced by this operation must be cleaned up.
+    final blocker = File('${temporaryDirectory.path}/destination')
+      ..writeAsBytesSync([9]);
+
+    expect(
+      () => FileMover.moveDirectory(source.path, blocker.path),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(source.existsSync(), isTrue);
+    expect(File('${source.path}/game.nsp').readAsBytesSync(), [1, 2, 3]);
+    expect(blocker.readAsBytesSync(), [9]);
+    expect(Directory(blocker.path).existsSync(), isFalse);
+  });
 }

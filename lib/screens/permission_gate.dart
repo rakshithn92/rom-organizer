@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -73,7 +75,7 @@ class _PermissionGateState extends State<PermissionGate>
   Future<void> _openSettings() async {
     await openAppSettings();
     if (!mounted) return;
-    _check();
+    unawaited(_check());
   }
 
   @override

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 
@@ -210,7 +211,7 @@ class _ImportScreenState extends State<ImportScreen> {
         ),
       ),
     );
-    _load();
+    unawaited(_load());
   }
 
   Future<void> _import(File file, {required bool isArchive}) async {
@@ -365,7 +366,7 @@ class _ImportScreenState extends State<ImportScreen> {
         const SnackBar(content: Text('ROM imported successfully.')),
       );
     }
-    _load();
+    unawaited(_load());
   }
 
   @override

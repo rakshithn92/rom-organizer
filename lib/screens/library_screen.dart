@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 
@@ -476,7 +477,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                           _GameDetail(game: _games[i]),
                                     ),
                                   );
-                                  if (changed == true && mounted) _load();
+                                  if (changed == true && mounted) {
+                                    unawaited(_load());
+                                  }
                                 },
                         ),
                       ),

@@ -130,4 +130,89 @@ void main() {
 
     expect(found, isNull);
   });
+
+  test('survives a symlink cycle inside the scanned tree', () {
+    write('top.nsp');
+    final sub = Directory('${tmp.path}/a')..createSync();
+    File('${sub.path}/inner.xci').writeAsBytesSync([1]);
+    // A self-referencing symlink recurses forever if the walker follows links;
+    // `followLinks: false` leaves it as a plain (skipped) Link entry.
+    Link('${sub.path}/loop').createSync(sub.path);
+
+    final found = RomScanner().findImportables(tmp);
+    expect(found, hasLength(2));
+    expect(found.map(p.basename).toSet(), {'top.nsp', 'inner.xci'});
+    expect(RomScanner().scan(tmp, recursive: true), hasLength(2));
+  });
+
+  test('does not follow a symlink to a ROM outside the scanned tree', () {
+    final outside = Directory('${tmp.path}/outside')..createSync();
+    final realRom = File('${outside.path}/real.nsp')..writeAsBytesSync([1]);
+    final scanned = Directory('${tmp.path}/scanned')..createSync();
+    File('${scanned.path}/own.nsp').writeAsBytesSync([2]);
+    Link('${scanned.path}/link.nsp').createSync(realRom.path);
+
+    expect(RomScanner().findImportables(scanned).map(p.basename).toList(),
+        ['own.nsp']);
+    expect(RomScanner().scan(scanned).map((r) => r.name).toList(), ['own.nsp']);
+  });
+
+  test('does not descend into a symlinked directory', () {
+    final outside = Directory('${tmp.path}/outside')..createSync();
+    File('${outside.path}/hidden.nsp').writeAsBytesSync([1]);
+    final scanned = Directory('${tmp.path}/scanned')..createSync();
+    File('${scanned.path}/own.nsp').writeAsBytesSync([2]);
+    Link('${scanned.path}/linkdir').createSync(outside.path);
+
+    expect(RomScanner().findImportables(scanned).map(p.basename).toList(),
+        ['own.nsp']);
+    expect(RomScanner().scan(scanned, recursive: true), hasLength(1));
+  });
+
+  test(
+    'skips an unreadable subdirectory instead of throwing',
+    () {
+      write('top.nsp');
+      final sub = Directory('${tmp.path}/sub')..createSync();
+      File('${sub.path}/nested.xci').writeAsBytesSync([1]);
+      final blocked = Directory('${tmp.path}/blocked')..createSync();
+      File('${blocked.path}/hidden.nsp').writeAsBytesSync([2]);
+
+      Process.runSync('chmod', ['000', blocked.path]);
+      var unreadable = false;
+      try {
+        blocked.listSync();
+      } on FileSystemException {
+        unreadable = true;
+      }
+      if (!unreadable) {
+        // A root runner (or a filesystem ignoring mode bits) can still read the
+        // tree, so the injection cannot be produced honestly; assert the plain
+        // walk instead of pinning a failure that cannot happen.
+        expect(RomScanner().scan(tmp, recursive: true), hasLength(3));
+        expect(RomScanner().findImportables(tmp), hasLength(3));
+        return;
+      }
+      try {
+        final roms = RomScanner().scan(tmp, recursive: true);
+        expect(roms.map((r) => r.name).toSet(), {'top.nsp', 'nested.xci'});
+        final found = RomScanner().findImportables(tmp);
+        expect(found.map(p.basename).toSet(), {'top.nsp', 'nested.xci'});
+      } finally {
+        Process.runSync('chmod', ['755', blocked.path]);
+      }
+    },
+    skip: _runningAsRoot
+        ? 'chmod 000 is bypassed when the suite runs as root'
+        : null,
+  );
 }
+
+/// True when the suite runs as uid 0, where `chmod 000` does not block reads.
+final bool _runningAsRoot = () {
+  try {
+    return Process.runSync('id', ['-u']).stdout.toString().trim() == '0';
+  } catch (_) {
+    return false;
+  }
+}();
