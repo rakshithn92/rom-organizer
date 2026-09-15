@@ -37,6 +37,11 @@ class LibraryScreen extends StatefulWidget {
 class _LibraryScreenState extends State<LibraryScreen> {
   final TagDb _db = TagDb();
 
+  /// Library root of the profile the app runs in. Starts at the
+  /// primary-profile default and is replaced by the resolved root before the
+  /// first load completes.
+  String _libraryRoot = AppPaths.libraryRoot;
+
   List<Directory> _games = [];
   Map<String, String> _covers = {}; // game folder path -> boxart url
   bool _loading = true;
@@ -51,7 +56,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   void initState() {
     super.initState();
-    _load();
+    _resolveRoots();
+  }
+
+  /// Resolves the profile's storage roots (memoized, so this is a no-op after
+  /// the first screen) and only then lists the library.
+  Future<void> _resolveRoots() async {
+    final paths = await AppPaths.load();
+    if (!mounted) return;
+    _libraryRoot = paths.libraryRoot;
+    await _load();
   }
 
   /// Empty-string sentinel stored under `cover:<path>` once a search has
@@ -69,7 +83,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       _busy = true;
     });
     try {
-      final root = Directory(AppPaths.libraryRoot);
+      final root = Directory(_libraryRoot);
       final games = <Directory>[];
       if (root.existsSync()) {
         for (final e in root.listSync(followLinks: false)) {
@@ -187,7 +201,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final int moved;
     try {
       moved = await Isolate.run(
-        () => Importer(AppPaths.libraryRoot).mergeGames(target.path, sources),
+        () => Importer(_libraryRoot).mergeGames(target.path, sources),
       );
       if (!mounted) return;
       // Remove the cover + title-ID cache keys for the merged-away source
@@ -337,7 +351,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     try {
       final gamePaths = _games.map((game) => game.path).toList();
       final result = await Isolate.run(() {
-        final importer = Importer(AppPaths.libraryRoot);
+        final importer = Importer(_libraryRoot);
         var deleted = 0;
         for (final gamePath in gamePaths) {
           deleted += importer.deleteOldUpdates(gamePath);

@@ -45,9 +45,12 @@ class ImportCoordinator {
   /// IDs for libraries created before IDs were persisted.
   final RomScanner _scanner = RomScanner();
 
-  ImportCoordinator({TagDb? db, Importer? importer})
+  /// [libraryRoot] is the profile's resolved library root ([StoragePaths.libraryRoot]
+  /// from [AppPaths.load]); it only matters when [importer] is not supplied.
+  /// Ignored when [importer] is given — that importer already carries its root.
+  ImportCoordinator({TagDb? db, Importer? importer, String? libraryRoot})
       : db = db ?? TagDb(),
-        importer = importer ?? Importer(AppPaths.libraryRoot);
+        importer = importer ?? Importer(libraryRoot ?? AppPaths.libraryRoot);
 
   /// Archives the `archive` package cannot decode in-app. They are still
   /// listed by the scanner so the UI can explain what to do with them.

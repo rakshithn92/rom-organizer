@@ -37,6 +37,11 @@ separated, and reclaim space by deleting fully-extracted zips.
   app safely moves data from the old `/ROMs/Switch`, `/ROMs`, `/ROM`, and
   `/Content` locations (including `Download/ROM` and `Download/Content`).
   Existing destination files are never overwritten.
+- **Per-profile storage** — the Downloads root is resolved at runtime, so on
+  secondary user profiles (work profiles, guest users, multi-user devices) the
+  library lands under that profile's own storage — e.g.
+  `/storage/10,13CD-8901/Download/ROM Manager/` — instead of the primary
+  profile's `/storage/emulated/0`. On the primary profile nothing changes.
 - **Library view** — grid of your games with cover art (fetched from
   TheGamesDB and cached locally), an "has update" badge, and a detail view
   listing base + update files.

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:rom_organizer/config/app_paths.dart';
 import 'package:rom_organizer/services/import_coordinator.dart';
 import 'package:rom_organizer/services/importer.dart';
 import 'package:rom_organizer/services/tag_db.dart';
@@ -95,6 +96,33 @@ void main() {
 
   tearDown(() {
     if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+  });
+
+  group('libraryRoot', () {
+    test('the injected root reaches the importer it builds', () {
+      // The screens resolve the profile's root at runtime and hand it to the
+      // coordinator, so the default importer must address that root rather
+      // than the primary-profile constant.
+      final coordinator = ImportCoordinator(libraryRoot: '/resolved/lib');
+
+      expect(coordinator.importer.libraryRoot, '/resolved/lib');
+    });
+
+    test('falls back to the primary-profile constant without a root', () {
+      expect(
+        ImportCoordinator().importer.libraryRoot,
+        AppPaths.libraryRoot,
+      );
+    });
+
+    test('an injected importer wins over the root', () {
+      final coordinator = ImportCoordinator(
+        importer: Importer('/explicit'),
+        libraryRoot: '/resolved/lib',
+      );
+
+      expect(coordinator.importer.libraryRoot, '/explicit');
+    });
   });
 
   group('resolveTitle', () {

@@ -26,7 +26,12 @@ class ImportScreen extends StatefulWidget {
 class _ImportScreenState extends State<ImportScreen> {
   /// Owns title lookup, title-ID matching, and the bulk import workflow.
   /// The screen keeps only the dialogs and navigation.
-  late final ImportCoordinator _coordinator = ImportCoordinator();
+  late ImportCoordinator _coordinator;
+
+  /// Storage roots of the profile the app runs in. Seeded with the
+  /// primary-profile defaults and replaced by the resolved roots before the
+  /// first listing completes.
+  StoragePaths _paths = StoragePaths.fromDownloadsRoot(AppPaths.downloadsRoot);
 
   Directory _current = Directory(AppPaths.defaultImportRoot);
   List<Directory> _subdirs = [];
@@ -37,12 +42,31 @@ class _ImportScreenState extends State<ImportScreen> {
   @override
   void initState() {
     super.initState();
-    _load();
+    // Seeded with the fallback root so an interaction in the first frames
+    // still has a working coordinator; `_resolveRoots` rebuilds it against the
+    // resolved root as soon as the platform answers.
+    _coordinator = ImportCoordinator(libraryRoot: _paths.libraryRoot);
+    _resolveRoots();
+  }
+
+  /// Resolves the profile's storage roots (memoized, so this resolves for the
+  /// whole process at most once), points the coordinator at the resolved
+  /// library, and lists the resolved Downloads root.
+  Future<void> _resolveRoots() async {
+    final paths = await AppPaths.load();
+    if (!mounted) return;
+    _paths = paths;
+    _coordinator = ImportCoordinator(
+      db: _coordinator.db,
+      libraryRoot: paths.libraryRoot,
+    );
+    _current = Directory(paths.defaultImportRoot);
+    await _load();
   }
 
   Future<void> _load() async {
     if (!_isInDownloads(_current.path)) {
-      _current = Directory(AppPaths.downloadsRoot);
+      _current = Directory(_paths.downloadsRoot);
     }
     final dirs = <Directory>[];
     final archives = <File>[];
@@ -81,7 +105,7 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   void _up() {
-    if (p.equals(p.normalize(_current.path), AppPaths.downloadsRoot)) return;
+    if (p.equals(p.normalize(_current.path), _paths.downloadsRoot)) return;
     final parent = _current.parent;
     if (!_isInDownloads(parent.path)) return;
     setState(() => _current = parent);
@@ -101,7 +125,7 @@ class _ImportScreenState extends State<ImportScreen> {
       _coordinator.resolveTargetByTitleId(fileName);
 
   Future<String?> _pickExistingGameFolder() async {
-    final root = Directory(AppPaths.libraryRoot);
+    final root = Directory(_paths.libraryRoot);
     if (!root.existsSync()) return null;
     final games = root
         .listSync(followLinks: false)
@@ -131,12 +155,13 @@ class _ImportScreenState extends State<ImportScreen> {
     ImportReport report;
     try {
       final currentPath = _current.path;
+      final managerRoot = _paths.managerRoot;
       final List<String> files;
       try {
         files = await Isolate.run(
           () => RomScanner().findImportables(
             Directory(currentPath),
-            excludedRoots: const {AppPaths.managerRoot},
+            excludedRoots: {managerRoot},
           ),
         );
       } catch (e) {
@@ -374,7 +399,7 @@ class _ImportScreenState extends State<ImportScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_current.path),
-        leading: !p.equals(p.normalize(_current.path), AppPaths.downloadsRoot)
+        leading: !p.equals(p.normalize(_current.path), _paths.downloadsRoot)
             ? IconButton(icon: const Icon(Icons.arrow_upward), onPressed: _up)
             : null,
         actions: [
@@ -429,9 +454,9 @@ class _ImportScreenState extends State<ImportScreen> {
     );
   }
 
-  static bool _isInDownloads(String candidate) {
+  bool _isInDownloads(String candidate) {
     final path = p.normalize(p.absolute(candidate));
-    final root = p.normalize(p.absolute(AppPaths.downloadsRoot));
+    final root = p.normalize(p.absolute(_paths.downloadsRoot));
     return p.equals(path, root) || p.isWithin(root, path);
   }
 }

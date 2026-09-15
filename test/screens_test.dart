@@ -2,7 +2,9 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:rom_organizer/config/app_paths.dart';
+import 'package:rom_organizer/screens/import_screen.dart';
 import 'package:rom_organizer/screens/library_screen.dart';
 import 'package:rom_organizer/screens/settings_screen.dart';
 import 'package:rom_organizer/services/tag_db.dart';
@@ -10,11 +12,11 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// Widget tests for the screens.
 ///
-/// Screens read their storage roots straight from [AppPaths] (const Android
-/// paths with no injection seam) and their settings/covers from the
-/// statically-memoized [TagDb]. So instead of pumping the whole app, these
-/// tests pump the screen under test and redirect the sqflite factory at a temp
-/// directory, exactly like `tag_db_test.dart` does.
+/// Screens resolve their storage roots through [AppPaths.load], so these tests
+/// pin a temp root with [AppPaths.overrideForTesting] and read their
+/// settings/covers from the statically-memoized [TagDb]. Instead of pumping the
+/// whole app, they pump the screen under test and redirect the sqflite factory
+/// at a temp directory, exactly like `tag_db_test.dart` does.
 ///
 /// `RomOrganizerApp` is deliberately never pumped here: it wraps the tree in
 /// `PermissionGate`, whose `permission_handler` platform channel has no
@@ -25,6 +27,10 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 void main() {
   late Directory tmp;
 
+  /// The pinned roots: a temp Downloads folder, so the library root the screen
+  /// lists is creatable (unlike the const Android path).
+  late StoragePaths paths;
+
   setUpAll(() {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
@@ -34,23 +40,26 @@ void main() {
     tmp = Directory.systemTemp.createTempSync('screens_');
     await databaseFactory.setDatabasesPath(tmp.path);
     TagDb.resetForTesting();
+    paths = StoragePaths.fromDownloadsRoot(p.join(tmp.path, 'Download'));
+    AppPaths.overrideForTesting(paths);
   });
 
   tearDown(() {
     TagDb.resetForTesting();
+    AppPaths.restoreForTesting();
     if (tmp.existsSync()) tmp.deleteSync(recursive: true);
   });
 
   group('LibraryScreen', () {
     testWidgets('renders the empty state when the library root is missing',
         (tester) async {
-      // This host is not Android, so the hardcoded library root is absent and
-      // the screen takes its empty branch.
+      // The pinned library root is never created, so the screen takes its
+      // empty branch.
       expect(
-        Directory(AppPaths.libraryRoot).existsSync(),
+        Directory(paths.libraryRoot).existsSync(),
         isFalse,
         reason: 'The empty-state path is only reachable while '
-            '${AppPaths.libraryRoot} does not exist.',
+            '${paths.libraryRoot} does not exist.',
       );
 
       await tester.pumpWidget(const MaterialApp(home: LibraryScreen()));
@@ -78,6 +87,48 @@ void main() {
       await tester.pump();
 
       expect(find.byType(LibraryScreen), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('lists the game folders under the resolved library root',
+        (tester) async {
+      // Two real folders under the resolved root: the listing branch used to
+      // be unreachable off-device because the root was a const Android path.
+      Directory(p.join(paths.libraryRoot, 'Mario Kart 8')).createSync(recursive: true);
+      Directory(p.join(paths.libraryRoot, 'Zelda')).createSync(recursive: true);
+
+      await tester.runAsync(() async {
+        await tester.pumpWidget(const MaterialApp(home: LibraryScreen()));
+        // Let the root resolution and the (ffi) DB reads settle. The settings
+        // table is empty, so no TheGamesDB request is made.
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await tester.pump();
+      });
+
+      expect(find.byType(GridView), findsOneWidget);
+      expect(find.text('Mario Kart 8'), findsOneWidget);
+      expect(find.text('Zelda'), findsOneWidget);
+      expect(find.textContaining('No games yet'), findsNothing);
+      // No cover is cached, so each card shows the placeholder icon instead of
+      // an Image.network (which the test binding cannot load).
+      expect(find.byIcon(Icons.videogame_asset), findsNWidgets(2));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('badges a game folder that has an update subfolder',
+        (tester) async {
+      final game = Directory(p.join(paths.libraryRoot, 'Mario Kart 8'))
+        ..createSync(recursive: true);
+      File(p.join(game.path, 'Mario Kart 8.nsp')).writeAsBytesSync([1]);
+      Directory(p.join(game.path, 'update')).createSync();
+
+      await tester.runAsync(() async {
+        await tester.pumpWidget(const MaterialApp(home: LibraryScreen()));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await tester.pump();
+      });
+
+      expect(find.text('has update'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });
@@ -121,12 +172,56 @@ void main() {
     });
   });
 
-  // Not covered here: 'lists game folders from the library root', the
-  // no-cover placeholder icon, and navigation into the (private) `_GameDetail`
-  // view. All of them need at least one game folder under
-  // `Directory(AppPaths.libraryRoot)`, a const Android path that does not
-  // exist on this host and cannot be injected (`AppPaths` is const and
-  // `LibraryScreen` takes no root parameter). Creating `/storage/emulated/0`
-  // would mean writing outside the workspace as root, so the listing branch is
-  // exercised on-device only.
+  group('ImportScreen', () {
+    testWidgets('browses the resolved Downloads root and lists its archives',
+        (tester) async {
+      // The browser opens in the resolved Downloads root — not the const
+      // /storage/emulated/0/Download — and lists what is actually inside.
+      Directory(p.join(paths.defaultImportRoot, 'Extras')).createSync(recursive: true);
+      File(p.join(paths.defaultImportRoot, 'Game.zip')).writeAsBytesSync([1]);
+
+      await tester.runAsync(() async {
+        await tester.pumpWidget(const MaterialApp(home: ImportScreen()));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await tester.pump();
+      });
+
+      expect(find.text(paths.defaultImportRoot), findsOneWidget);
+      expect(find.text('Game.zip'), findsOneWidget);
+      expect(find.text('Extras'), findsOneWidget);
+      // At the root, so there is nothing to go up to.
+      expect(find.byIcon(Icons.arrow_upward), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('refuses to browse above the resolved Downloads root',
+        (tester) async {
+      Directory(p.join(paths.defaultImportRoot, 'Sub')).createSync(recursive: true);
+      File(p.join(paths.defaultImportRoot, 'Sub', 'Nested.zip')).writeAsBytesSync([1]);
+
+      await tester.runAsync(() async {
+        await tester.pumpWidget(const MaterialApp(home: ImportScreen()));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await tester.pump();
+      });
+
+      await tester.tap(find.text('Sub'));
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await tester.pump();
+      });
+
+      // Descended into the subfolder: the parent is now reachable.
+      expect(find.text(p.join(paths.defaultImportRoot, 'Sub')), findsOneWidget);
+      expect(find.text('Nested.zip'), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_upward), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  // Not covered here: the no-cover placeholder branch with a *cached* cover
+  // URL (Image.network cannot load in the test binding) and navigation into the
+  // (private) `_GameDetail` view. The listing branch itself is covered above
+  // through `AppPaths.overrideForTesting`, which points the screen at a temp
+  // library root.
 }

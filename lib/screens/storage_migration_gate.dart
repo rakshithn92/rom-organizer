@@ -26,11 +26,14 @@ class _StorageMigrationGateState extends State<StorageMigrationGate> {
 
   Future<void> _migrate() async {
     setState(() => _running = true);
+    // The migration moves the profile's legacy folders into the profile's
+    // current roots, so both sides come from the same resolved instance.
+    final paths = await AppPaths.load();
     final report = await StorageMigrator(
-      libraryRoot: AppPaths.libraryRoot,
-      contentRoot: AppPaths.contentRoot,
-      legacyLibraryRoots: AppPaths.legacyLibraryRoots,
-      legacyContentRoots: AppPaths.legacyContentRoots,
+      libraryRoot: paths.libraryRoot,
+      contentRoot: paths.contentRoot,
+      legacyLibraryRoots: paths.legacyLibraryRoots,
+      legacyContentRoots: paths.legacyContentRoots,
       migrateMetadata: TagDb().migratePathPrefix,
     ).run();
     if (!mounted) return;

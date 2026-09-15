@@ -1,6 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rom_organizer/config/app_paths.dart';
 
+/// Structural invariants of the constant roots.
+///
+/// These constants are the **primary-profile fallback** used when
+/// `path_provider` cannot answer; the runtime resolution and the derived
+/// profile-aware roots are covered by `app_paths_resolver_test.dart`.
 void main() {
   group('AppPaths structural invariants', () {
     const activeRoots = <String>[
